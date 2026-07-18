@@ -16,14 +16,24 @@
 
 <br>
 
-```text
- ____                  ____  _     _      _     _
-|  _ \  ___  ___ _ __ / ___|| |__ (_) ___| | __| |
-| | | |/ _ \/ _ \ '_ \\___ \| '_ \| |/ _ \ |/ _` |
-| |_| |  __/  __/ |_) |___) | | | | |  __/ | (_| |
-|____/ \___|\___| .__/|____/|_| |_|_|\___|_|\__,_|
-                |_|
-```
+<div align="center">
+<table>
+<tr>
+<td>
+<pre>
+ _____                  _____ _     _      _     _
+|  __ \                / ____| |   (_)    | |   | |
+| |  | | ___  ___ _ __| (___ | |__  _  ___| | __| |
+| |  | |/ _ \/ _ \ '_ \\___ \| '_ \| |/ _ \ |/ _` |
+| |__| |  __/  __/ |_) |___) | | | | |  __/ | (_| |
+|_____/ \___|\___| .__/_____/|_| |_|_|\___|_|\__,_|
+                 | |
+                 |_|
+</pre>
+</td>
+</tr>
+</table>
+</div>
 
 [![Architecture](https://img.shields.io/badge/Architecture-5--Layer%20Ensemble-blueviolet?style=for-the-badge)](#-architecture)
 [![Accuracy](https://img.shields.io/badge/Accuracy-97.3%25%20Celeb--DF-success?style=for-the-badge)](#-benchmarks)
