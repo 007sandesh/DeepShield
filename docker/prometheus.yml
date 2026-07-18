@@ -1,0 +1,24 @@
+# Prometheus configuration for DeepShield monitoring
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "deepshield-api"
+    static_configs:
+      - targets: ["api:8000"]
+    metrics_path: "/metrics"
+
+  - job_name: "deepshield-system"
+    static_configs:
+      - targets: ["api:8000"]
+    metrics_path: "/system/metrics"
+
+  - job_name: "postgres"
+    static_configs:
+      - targets: ["postgres:9187"]
+
+  - job_name: "redis"
+    static_configs:
+      - targets: ["redis:9121"]

@@ -1,0 +1,146 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deepshield"
+version = "1.0.0"
+description = "Production-grade AI deepfake detection platform with multi-modal analysis and full explainability"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Your Name", email = "your@email.com" }
+]
+keywords = ["deepfake", "detection", "computer-vision", "security", "forensics"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Core ML
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "timm>=0.9.0",
+    "transformers>=4.30.0",
+    "onnxruntime>=1.15.0",
+
+    # Face Detection & Alignment
+    "retina-face>=0.0.17",
+    "mediapipe>=0.10.0",
+
+    # Audio Analysis
+    "librosa>=0.10.0",
+    "openai-whisper>=20230918",
+    "soundfile>=0.12.0",
+
+    # Image/Video Processing
+    "opencv-python>=4.8.0",
+    "Pillow>=10.0.0",
+    "scikit-image>=0.21.0",
+
+    # Explainability
+    "shap>=0.42.0",
+    "lime>=0.2.0",
+    "grad-cam>=1.4.0",
+
+    # Data Science
+    "numpy>=1.24.0",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.3.0",
+    "scipy>=1.11.0",
+
+    # API
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.23.0",
+    "python-multipart>=0.0.6",
+    "websockets>=11.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+
+    # CLI
+    "click>=8.1.0",
+    "rich>=13.0.0",
+    "typer>=0.9.0",
+
+    # MLOps
+    "mlflow>=2.5.0",
+    "dvc>=3.0.0",
+
+    # Monitoring
+    "prometheus-client>=0.17.0",
+    "structlog>=23.0.0",
+
+    # Utils
+    "python-dotenv>=1.0.0",
+    "pyyaml>=6.0",
+    "tqdm>=4.65.0",
+    "loguru>=0.7.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-xdist>=3.3.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.5.0",
+    "pre-commit>=3.3.0",
+    "isort>=5.12.0",
+]
+gpu = [
+    "torch[cuda]>=2.0.0",
+    "nvidia-cudnn-cu11>=8.6.0",
+]
+landmarks = [
+    "dlib>=19.24.0",
+]
+
+[project.scripts]
+deepshield = "src.cli.main:app"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/deepshield"
+Documentation = "https://github.com/yourusername/deepshield#readme"
+Repository = "https://github.com/yourusername/deepshield"
+Issues = "https://github.com/yourusername/deepshield/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "I", "N", "UP", "S", "B", "A", "COM", "C4", "DTZ", "ISC", "ICN", "PIE", "PT", "RSE", "RET", "SLF", "SIM", "TID", "TCH", "ARG", "PTH", "ERA"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "gpu: marks tests that require GPU",
+    "integration: marks integration tests",
+]
