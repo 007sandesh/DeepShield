@@ -18,6 +18,7 @@ from loguru import logger
 
 from src.core.models.base import BaseModel, ModelOutput, ModelRegistry
 from src.core.preprocessors.face_extraction import FaceExtractor, ExtractedFace
+import src.core.models  # noqa: F401 — register detection models
 
 
 @dataclass
@@ -26,7 +27,10 @@ class DetectionResult:
 
     # Core prediction
     prediction: str  # "REAL" or "FAKE"
-    confidence: float  # 0.0 - 1.0
+    confidence: float  # Probability of the predicted class (0.0 - 1.0)
+    probabilities: dict[str, float] = field(
+        default_factory=lambda: {"real": 0.5, "fake": 0.5}
+    )
 
     # Per-model breakdown
     model_results: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -50,12 +54,18 @@ class DetectionResult:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to JSON-serializable dict."""
+        real_p = float(self.probabilities.get("real", 1.0 - self.confidence))
+        fake_p = float(self.probabilities.get("fake", self.confidence))
+        # Keep probs normalized and consistent with the predicted label
+        total = real_p + fake_p
+        if total > 0:
+            real_p, fake_p = real_p / total, fake_p / total
         return {
             "prediction": self.prediction,
             "confidence": round(self.confidence, 4),
             "probability": {
-                "real": round(1 - self.confidence, 4) if self.prediction == "FAKE" else round(self.confidence, 4),
-                "fake": round(self.confidence, 4) if self.prediction == "FAKE" else round(1 - self.confidence, 4),
+                "real": round(real_p, 4),
+                "fake": round(fake_p, 4),
             },
             "faces_detected": self.faces_detected,
             "best_face_quality": round(self.best_face_quality, 4),
@@ -94,6 +104,7 @@ class ImageDetectionPipeline:
         self._initialized = False
 
         self._model_names = models or [
+            "ai_image_detector",
             "forgery_detector",
             "frequency_analyzer",
             "attention_network",
@@ -187,7 +198,9 @@ class ImageDetectionPipeline:
 
         for name, model in self._models.items():
             try:
-                output = model.predict(best_face.image)
+                # Generative-AI detectors work best on the full frame
+                model_input = image if name == "ai_image_detector" else best_face.image
+                output = model.predict(model_input)
                 model_results[name] = output.to_dict()
                 model_times[name] = output.inference_time_ms
 
@@ -202,17 +215,28 @@ class ImageDetectionPipeline:
                 model_results[name] = {"error": str(e)}
 
         # Ensemble prediction
+        probabilities = {"real": 0.5, "fake": 0.5}
         if self._ensemble:
             try:
-                ensemble_output = self._ensemble.predict(best_face.image)
-                final_prediction = ensemble_output.prediction.upper()
-                final_confidence = ensemble_output.confidence
+                ensemble_output = self._ensemble.predict(
+                    best_face.image, full_image=image
+                )
+                probabilities = {
+                    "real": float(ensemble_output.probabilities.get("real", 0.5)),
+                    "fake": float(ensemble_output.probabilities.get("fake", 0.5)),
+                }
+                final_prediction, final_confidence, probabilities = self._resolve_prediction(
+                    probabilities
+                )
             except Exception as e:
                 logger.error(f"Ensemble failed: {e}")
-                # Fallback: majority vote
-                final_prediction, final_confidence = self._majority_vote(model_results)
+                final_prediction, final_confidence, probabilities = self._majority_vote(
+                    model_results
+                )
         else:
-            final_prediction, final_confidence = self._majority_vote(model_results)
+            final_prediction, final_confidence, probabilities = self._majority_vote(
+                model_results
+            )
 
         # Generate explanation
         explanation = self._generate_explanation(
@@ -227,6 +251,7 @@ class ImageDetectionPipeline:
         return DetectionResult(
             prediction=final_prediction,
             confidence=final_confidence,
+            probabilities=probabilities,
             model_results=model_results,
             faces_detected=len(faces),
             best_face_quality=best_face.quality_score,
@@ -238,26 +263,46 @@ class ImageDetectionPipeline:
             input_shape=image.shape,
         )
 
+    def _resolve_prediction(
+        self, probabilities: dict[str, float]
+    ) -> tuple[str, float, dict[str, float]]:
+        """Pick the stronger class and set confidence to that class probability."""
+        real_p = float(probabilities.get("real", 0.5))
+        fake_p = float(probabilities.get("fake", 0.5))
+        total = real_p + fake_p
+        if total > 0:
+            real_p, fake_p = real_p / total, fake_p / total
+        else:
+            real_p = fake_p = 0.5
+
+        if fake_p >= real_p:
+            return "FAKE", fake_p, {"real": real_p, "fake": fake_p}
+        return "REAL", real_p, {"real": real_p, "fake": fake_p}
+
     def _majority_vote(
         self, model_results: dict[str, dict]
-    ) -> tuple[str, float]:
-        """Fallback: majority vote from model results."""
-        votes = {"REAL": 0, "FAKE": 0}
-        total_conf = 0.0
-        count = 0
+    ) -> tuple[str, float, dict[str, float]]:
+        """Fallback: average fake probabilities from successful model results."""
+        fake_scores: list[float] = []
 
-        for name, result in model_results.items():
-            if "prediction" in result:
-                pred = result["prediction"].upper()
-                if pred in votes:
-                    votes[pred] += 1
-                    total_conf += result.get("confidence", 0.5)
-                    count += 1
+        for result in model_results.values():
+            if "error" in result or "prediction" not in result:
+                continue
 
-        prediction = max(votes, key=votes.get)
-        confidence = total_conf / max(count, 1)
+            probs = result.get("probabilities") or {}
+            if "fake" in probs:
+                fake_scores.append(float(probs["fake"]))
+                continue
 
-        return prediction, confidence
+            conf = float(result.get("confidence", 0.5))
+            pred = str(result["prediction"]).upper()
+            fake_scores.append(conf if pred == "FAKE" else 1.0 - conf)
+
+        if not fake_scores:
+            return "UNCERTAIN", 0.0, {"real": 0.5, "fake": 0.5}
+
+        avg_fake = float(np.mean(fake_scores))
+        return self._resolve_prediction({"real": 1.0 - avg_fake, "fake": avg_fake})
 
     def _generate_explanation(
         self,

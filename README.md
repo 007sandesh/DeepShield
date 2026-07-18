@@ -2,9 +2,9 @@
 
 # 🛡️ DeepShield
 
-### AI-Powered Deepfake Detection Platform
+### Reliable Deepfake Detection You Can Run Locally
 
-**Production-grade, multi-modal deepfake detection with explainability and adversarial robustness.**
+**Multi-model face forgery analysis with clear explanations — built for researchers, builders, and anyone who wants to verify what they see.**
 
 <br>
 
@@ -35,66 +35,92 @@
 </table>
 </div>
 
-[![Architecture](https://img.shields.io/badge/Architecture-5--Layer%20Ensemble-blueviolet?style=for-the-badge)](#-architecture)
-[![Accuracy](https://img.shields.io/badge/Accuracy-97.3%25%20Celeb--DF-success?style=for-the-badge)](#-benchmarks)
-[![Explainability](https://img.shields.io/badge/Explainability-SHAP%20%2B%20GradCAM-orange?style=for-the-badge)](#-explainability)
+[![Focus](https://img.shields.io/badge/Focus-Face%20Deepfakes-blueviolet?style=for-the-badge)](#-what-deepshield-detects-today)
+[![Models](https://img.shields.io/badge/Models-EfficientNet%20%2B%20Ensemble-success?style=for-the-badge)](#-how-it-works)
+[![CLI](https://img.shields.io/badge/Interface-CLI%20%2B%20API-orange?style=for-the-badge)](#-quick-start)
 
 </div>
 
 ---
 
-## 🎯 Key Features
+## Why DeepShield?
+
+Deepfakes are getting better — DeepShield gives you a practical way to check images and videos for **face manipulation and forgery**. Multiple specialized models examine the same media, then an ensemble combines their signals into one clear verdict: **REAL** or **FAKE**, with confidence and a short explanation.
+
+| Strength | What you get |
+|----------|----------------|
+| **Strong on face deepfakes** | EfficientNet-B4 weights trained on Celeb-DF / FaceForensics-style face-swap data |
+| **Multi-signal analysis** | Spatial forgery, frequency cues, and attention — not a single black-box score |
+| **Explainable output** | Human-readable explanations and per-model breakdowns |
+| **Easy to run** | One CLI command after downloading weights |
+| **Open & extensible** | MIT license, FastAPI surface, Docker-friendly layout |
+
+---
+
+## What DeepShield Detects Today
+
+DeepShield is tuned for **face-centric deepfakes** — swaps, reenactment, and related facial forgery patterns common in research benchmarks and real-world clips.
+
+**Well suited for:**
+- Face-swap and face-reenactment deepfakes
+- Portraits / talking-head style media with a clear face
+- Offline forensic checks via CLI or API
+
+**Coming soon — AI-generated image detection:**
+Dedicated coverage for fully synthetic stills (e.g. ChatGPT Images, Midjourney, Stable Diffusion / SDXL). That capability is on the roadmap so DeepShield can flag both classic deepfakes **and** generative AI media with the same clarity.
+
+---
+
+## Key Capabilities
 
 <table>
 <tr>
 <td width="50%">
 
-### 🔍 Multi-Layer Detection
-Five independent analysis layers working in parallel, combined via a learned ensemble meta-classifier for maximum accuracy.
+### Multi-Layer Detection
+Independent analyzers run together, then fuse through a weighted ensemble.
 
-- **Frequency Analysis** — GAN spectral artifact detection
-- **Temporal Consistency** — Frame-to-frame anomaly detection
-- **Biological Signals** — rPPG, eye reflections, micro-expressions
-- **Attention Networks** — Vision Transformer patch analysis
-- **Audio-Visual Sync** — Lip-audio correlation scoring
+- **Forgery Detector** — EfficientNet-B4 face forgery scoring
+- **Frequency Analysis** — Spectral / DCT-style artifact cues
+- **Attention Network** — Patch-level suspicion signals
+- **Ensemble** — Calibrated Real / Fake probabilities
+
+*Video pipelines also include temporal, biological, and audio-sync modules.*
 
 </td>
 <td width="50%">
 
-### 🧠 Explainable AI
-Every prediction comes with human-readable explanations and visual evidence.
+### Clear Results
+Every run aims to be actionable, not just a number.
 
-- **Grad-CAM Heatmaps** — Where the model is looking
-- **Attention Maps** — Transformer self-attention visualization
-- **SHAP Values** — Feature importance breakdown
-- **Per-Frame Timeline** — Frame-by-frame confidence scores
-- **Natural Language** — Plain English explanations
+- Real / Fake label with confidence
+- Per-model votes and timings
+- Plain-language explanation
+- Optional JSON export for tooling
 
 </td>
 </tr>
 <tr>
 <td>
 
-### ⚡ Production Ready
-Built with software engineering best practices, not just ML research.
+### Ready to Use
+Practical interfaces for local and server workflows.
 
-- **FastAPI** — Async REST + WebSocket API
-- **Docker** — One-click deployment
-- **CI/CD** — GitHub Actions pipeline
-- **Monitoring** — Prometheus + Grafana
-- **Rate Limiting** — Built-in API protection
+- **CLI** — `deepshield detect …`
+- **FastAPI** — REST endpoints for apps
+- **Docker** — Compose-based deployment layout
+- **CI** — GitHub Actions workflow included
 
 </td>
 <td>
 
-### 🛡️ Adversarial Robustness
-Tested against known evasion techniques.
+### Built to Grow
+Designed as a platform, not a one-off script.
 
-- **FGSM** — Fast Gradient Sign Method
-- **PGD** — Projected Gradient Descent
-- **Compression** — JPEG/H.264 artifact resilience
-- **Resolution** — Low-quality input handling
-- **Noise** — Random perturbation resistance
+- Pluggable model registry
+- Face detection + alignment preprocessing
+- Configurable device (`cpu` / `cuda` / `auto`)
+- Tests for core pipeline behavior
 
 </td>
 </tr>
@@ -102,331 +128,199 @@ Tested against known evasion techniques.
 
 ---
 
-## 📐 Architecture
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        DeepShield Pipeline                       │
+│                     DeepShield Pipeline                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  Input: Image / Video                                            │
 │       │                                                          │
 │       ▼                                                          │
 │  ┌──────────────────┐                                            │
-│  │   PREPROCESSING   │  Face detection → Alignment → Extraction  │
+│  │  PREPROCESSING    │  Face detect → Align → Crop               │
 │  └────────┬─────────┘                                            │
 │           │                                                      │
 │           ▼                                                      │
 │  ┌─────────────────────────────────────────────────────────┐    │
-│  │              5-LAYER DETECTION ENGINE                     │    │
+│  │           DETECTION LAYERS (parallel)                     │    │
 │  │                                                           │    │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐                  │    │
-│  │  │Frequency │ │ Temporal │ │  ViT     │   ← Parallel     │    │
-│  │  │Analyzer  │ │Analyzer  │ │Attention │     Execution     │    │
-│  │  └────┬─────┘ └────┬─────┘ └────┬─────┘                  │    │
-│  │       │             │            │                         │    │
-│  │  ┌────┴─────┐ ┌────┴─────┐                              │    │
-│  │  │Biological│ │  Audio   │                               │    │
-│  │  │ Signals  │ │  Sync    │                               │    │
-│  │  └────┬─────┘ └────┬─────┘                               │    │
-│  └───────┴─────────────┴───────────────────────────────────┘    │
-│           │                                                      │
-│           ▼                                                      │
+│  │  Forgery (EfficientNet) · Frequency · Attention           │    │
+│  │  (+ Temporal / Biological / Audio-Sync for video)         │    │
+│  └───────────────────────────┬─────────────────────────────┘    │
+│                              │                                   │
+│                              ▼                                   │
 │  ┌──────────────────┐                                            │
-│  │    ENSEMBLE       │  Learned weights + calibration            │
+│  │     ENSEMBLE      │  Weighted fusion + confidence             │
 │  └────────┬─────────┘                                            │
 │           │                                                      │
 │           ▼                                                      │
-│  ┌──────────────────┐                                            │
-│  │  EXPLAINABILITY   │  Heatmaps + SHAP + Text explanation       │
-│  └────────┬─────────┘                                            │
-│           │                                                      │
-│           ▼                                                      │
-│  Output: {                                                       │
-│    prediction: "REAL" | "FAKE",                                 │
-│    confidence: 0.97,                                            │
-│    explanation: "...",                                          │
-│    heatmap: <image>,                                            │
-│    per_frame_scores: [...]                                      │
-│  }                                                               │
+│  Output: prediction · confidence · explanation · model details   │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
-### Option 1: Docker (Recommended)
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/deepshield.git
-cd deepshield
-
-# Start all services
-docker-compose up -d
-
-# The API is now running at http://localhost:8000
-# Docs at http://localhost:8000/docs
-```
-
-### Option 2: Local Installation
+### 1. Install
 
 ```bash
-# Clone and install
-git clone https://github.com/yourusername/deepshield.git
-cd deepshield
+git clone https://github.com/007sandesh/DeepShield.git
+cd DeepShield
 
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+# Windows: venv\Scripts\activate
+# Linux/Mac: source venv/bin/activate
 
-# Install dependencies
 pip install -e ".[dev]"
-
-# Copy environment config
-cp .env.example .env
-
-# Run detection
-deepshield detect image.jpg
-
-# Start API server
-deepshield serve
 ```
 
-### Option 3: API Usage
+### 2. Download model weights
 
 ```bash
-# Analyze an image
-curl -X POST http://localhost:8000/detect/image \
-  -F "file=@suspicious_image.jpg"
-
-# Analyze a video
-curl -X POST http://localhost:8000/detect/video \
-  -F "file=@suspicious_video.mp4"
-
-# Check health
-curl http://localhost:8000/health
+python scripts/download_models.py
+# or lighter set:
+python scripts/download_models.py --light
 ```
 
-### Python SDK
+Weights land in `models/weights/` (gitignored — download once per machine).
+
+### 3. Detect
+
+```bash
+# Module form (always works after install)
+python -m src.cli.main detect path/to/image.jpg --verbose
+
+# Or via entry point, if on PATH
+deepshield detect path/to/image.jpg -o result.json
+```
+
+### 4. Optional: API server
+
+```bash
+deepshield serve
+# Docs: http://localhost:8000/docs
+```
+
+### Docker
+
+```bash
+docker-compose up -d
+```
+
+### Python API
 
 ```python
 from src.core.pipelines.image_pipeline import ImageDetectionPipeline
 
-# Initialize pipeline
 pipeline = ImageDetectionPipeline(device="auto")
 pipeline.initialize()
 
-# Analyze an image
 result = pipeline.detect("path/to/image.jpg")
-
-print(f"Prediction: {result.prediction}")
-print(f"Confidence: {result.confidence:.2%}")
-print(f"Explanation: {result.explanation}")
+print(result.prediction, result.confidence, result.explanation)
 ```
 
 ---
 
-## 📊 Benchmarks
+## How It Works
 
-### Accuracy on Standard Datasets
+1. **Face extraction** — RetinaFace (with OpenCV fallback) finds and aligns faces.
+2. **Forgery scoring** — EfficientNet-B4 loads Celeb-DF-style checkpoint weights for face Real/Fake classification.
+3. **Frequency cues** — Looks for unnatural smoothness / spectral patterns common in forged faces.
+4. **Attention** — Spot-checks patch-level inconsistency.
+5. **Ensemble** — Combines model probabilities into a calibrated final verdict.
 
-| Dataset | Accuracy | F1-Score | AUC-ROC | Precision | Recall |
-|---------|----------|----------|---------|-----------|--------|
-| **Celeb-DF v2** | **97.3%** | 0.971 | 0.989 | 0.968 | 0.974 |
-| **FaceForensics++** | **96.8%** | 0.966 | 0.984 | 0.962 | 0.970 |
-| **DFDC** | **94.2%** | 0.939 | 0.971 | 0.935 | 0.943 |
-| **WildDeepfake** | **91.5%** | 0.912 | 0.958 | 0.908 | 0.916 |
-| **DeeperForensics** | **93.7%** | 0.934 | 0.967 | 0.931 | 0.937 |
-
-### Per-Model Performance
-
-| Model | Accuracy | Inference Time | Memory |
-|-------|----------|---------------|--------|
-| Forgery Detector (Xception) | 95.1% | 12ms | 85MB |
-| Frequency Analyzer | 91.8% | 8ms | 15MB |
-| Temporal Analyzer | 89.3% | 45ms | 120MB |
-| Biological Signals | 87.6% | 22ms | 45MB |
-| Audio-Visual Sync | 92.4% | 35ms | 200MB |
-| Attention Network (ViT) | 94.7% | 18ms | 330MB |
-| **Ensemble (Combined)** | **97.3%** | **85ms** | **800MB** |
-
-### Adversarial Robustness
-
-| Attack | Clean Accuracy | Under Attack | Recovery |
-|--------|---------------|-------------|----------|
-| FGSM (ε=0.01) | 97.3% | 89.2% | 91.5% |
-| PGD (ε=0.01, 10 steps) | 97.3% | 85.7% | 88.3% |
-| JPEG (quality=30) | 97.3% | 93.1% | — |
-| Resize (50%) | 97.3% | 94.8% | — |
-
-### Inference Speed
-
-| Input Type | GPU (RTX 3080) | CPU (i9-13900K) | Batch (16, GPU) |
-|-----------|----------------|-----------------|-----------------|
-| Single Image | 45ms | 180ms | 8ms/sample |
-| Video (30s) | 1.2s | 4.8s | — |
+Upstream EfficientNet Celeb-DF checkpoint reports strong validation accuracy on face-forgery benchmarks (~98.5% val accuracy in the included weights metadata). Your real-world results depend on media quality, face size, compression, and deepfake type — always review the per-model breakdown when stakes are high.
 
 ---
 
-## 🧠 How It Works
+## Roadmap
 
-### Detection Layer Breakdown
-
-#### 1. 🔬 Frequency Domain Analysis
-GAN generators leave spectral fingerprints due to upsampling operations.
-We detect these via FFT magnitude analysis and DCT coefficient patterns.
-
-```
-Real image FFT:     Fake image FFT:
-  Smooth spectrum     Periodic spikes
-  ↓↓↓↓↓↓↓↓↓↓         ↓↓↑↓↓↑↓↓↑↓↑
-```
-
-#### 2. ⏱️ Temporal Consistency
-Real faces move smoothly. Deepfakes have frame-to-frame jitter in
-facial landmarks, optical flow, and blink patterns.
-
-#### 3. 🫀 Biological Signals
-Real humans emit blood flow signals (rPPG), have consistent eye
-reflections, and natural micro-expressions that generators don't model.
-
-#### 4. 🔍 Attention Analysis
-Vision Transformer self-attention maps reveal which patches the model
-considers suspicious — often at manipulation boundaries.
-
-#### 5. 🔊 Audio-Visual Sync
-Lip movements should correlate with audio phonemes. Deepfakes often
-have measurable sync failures.
-
-#### 6. 🎯 Ensemble Meta-Classifier
-Learned combination weights (not fixed averaging) with temperature
-scaling for calibrated confidence scores.
+| Status | Item |
+|--------|------|
+| **Now** | Face deepfake image detection (EfficientNet + ensemble) |
+| **Now** | CLI, FastAPI scaffold, Docker layout, unit tests |
+| **Next** | Dedicated **AI-generated image** detection (ChatGPT / Midjourney / SDXL-class stills) |
+| **Next** | Stronger video end-to-end packaging and richer explainability UI |
+| **Later** | Broader adversarial evaluation and production hardening |
 
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 DeepShield/
 ├── src/
 │   ├── core/
-│   │   ├── models/              # Detection models
-│   │   │   ├── base.py          # Abstract base + registry
-│   │   │   ├── face_detector.py # RetinaFace/MTCNN
-│   │   │   ├── forgery_detector.py  # XceptionNet/EfficientNet
-│   │   │   ├── frequency_analyzer.py # FFT/DCT analysis
-│   │   │   ├── temporal_analyzer.py  # LSTM temporal analysis
-│   │   │   ├── biological_signals.py # rPPG + eye reflections
-│   │   │   ├── audio_sync.py    # Audio-visual sync
-│   │   │   ├── attention_network.py  # Vision Transformer
-│   │   │   └── ensemble.py      # Meta-classifier
-│   │   ├── pipelines/
-│   │   │   ├── image_pipeline.py    # Image analysis
-│   │   │   └── video_pipeline.py    # Video analysis
-│   │   └── preprocessors/
-│   │       ├── face_extraction.py   # Face detection + alignment
-│   │       ├── frame_sampling.py    # Intelligent frame selection
-│   │       └── audio_processing.py  # Audio extraction
-│   ├── api/                     # FastAPI backend
-│   ├── cli/                     # CLI tool
-│   ├── config/                  # Configuration management
-│   └── web/                     # Frontend (Next.js)
-├── tests/                       # Test suite
-├── docker/                      # Docker configs
-├── notebooks/                   # Jupyter analysis
-├── docs/                        # Documentation
+│   │   ├── models/           # Detectors + ensemble
+│   │   ├── pipelines/        # Image & video pipelines
+│   │   └── preprocessors/    # Face / frame / audio prep
+│   ├── api/                  # FastAPI app
+│   ├── cli/                  # Rich CLI
+│   └── config/               # Settings
+├── scripts/download_models.py
+├── tests/
+├── docker/
+├── docs/
 ├── docker-compose.yml
-├── pyproject.toml
-├── Makefile
-└── README.md
+└── pyproject.toml
 ```
 
 ---
 
-## 🧪 Testing
+## Testing
 
 ```bash
-# Run all tests
+pytest tests/ -v
+# or
 make test
-
-# Run with coverage
-make test-cov
-
-# Run specific test suite
-pytest tests/test_core.py -v
-
-# Run performance benchmarks
-pytest tests/ -v -m slow
 ```
 
 ---
 
-## 🛡️ Adversarial Robustness Testing
+## Tech Stack
 
-DeepShield is tested against known evasion techniques:
-
-| Technique | Description | Our Defense |
-|-----------|-------------|-------------|
-| **FGSM** | Fast Gradient Sign Method | Adversarial training |
-| **PGD** | Projected Gradient Descent | Multi-step adversarial training |
-| **Compression** | JPEG/H.264 re-encoding | Frequency-domain robustness |
-| **Upscaling** | Resolution manipulation | Multi-scale analysis |
-| **Noise Injection** | Random perturbation | Denoising preprocessing |
+| Layer | Tools |
+|-------|--------|
+| ML | PyTorch, timm, transformers |
+| Vision | OpenCV, RetinaFace, MediaPipe |
+| API / CLI | FastAPI, Typer, Rich |
+| Packaging | Docker, GitHub Actions |
 
 ---
 
-## 🏗️ Tech Stack
+## Contributing
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| **ML** | PyTorch, timm, transformers | Model training & inference |
-| **Vision** | OpenCV, dlib, mediapipe | Image processing |
-| **Audio** | librosa, Whisper | Audio analysis |
-| **API** | FastAPI, WebSocket | REST + streaming |
-| **CLI** | Click, Rich | Terminal interface |
-| **Database** | PostgreSQL, Redis | Storage + caching |
-| **MLOps** | MLflow, DVC | Experiment tracking |
-| **Monitoring** | Prometheus, Grafana | Metrics + dashboards |
-| **Deploy** | Docker, docker-compose | Container orchestration |
-| **CI/CD** | GitHub Actions | Automated pipeline |
+1. Fork the repo  
+2. Create a branch (`git checkout -b feature/your-idea`)  
+3. Commit and push  
+4. Open a Pull Request  
+
+Issues and PRs that improve accuracy, UX, or documentation are especially welcome.
 
 ---
 
-## 🤝 Contributing
+## License
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing`)
-5. Open a Pull Request
+MIT License — see [LICENSE](LICENSE).
 
 ---
 
-## 📄 License
+## Acknowledgments
 
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-## 🙏 Acknowledgments
-
-- [FaceForensics++](https://github.com/ondyari/FaceForensics) — Dataset
-- [Celeb-DF](https://github.com/yuezunli/celeb-deepfakeforensics) — Dataset
-- [RetinaFace](https://github.com/biubug6/Pytorch_Retinaface) — Face detection
-- [XceptionNet](https://github.com/Tony607/Keras_InceptionResNet_V2) — Architecture inspiration
-- [ViT](https://github.com/google-research/vision_transformer) — Attention analysis
+- [FaceForensics++](https://github.com/ondyari/FaceForensics) — Face forgery research dataset  
+- [Celeb-DF](https://github.com/yuezunli/celeb-deepfakeforensics) — Challenging deepfake benchmark  
+- [RetinaFace](https://github.com/biubug6/Pytorch_Retinaface) — Face detection  
+- Community EfficientNet / Xception deepfake checkpoints on Hugging Face  
 
 ---
 
 <div align="center">
 
-**Built with ❤️ to combat misinformation**
+**Built to help people trust what they see — starting with face deepfakes, expanding next to generative AI imagery.**
 
-[![Twitter](https://img.shields.io/badge/Twitter-@yourhandle-1DA1F2?style=for-the-badge&logo=twitter&logoColor=white)](https://twitter.com/yourhandle)
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-Your-Name-0A66C2?style=for-the-badge&logo=linkedin&logoColor=white)](https://linkedin.com/in/yourname)
-[![GitHub](https://img.shields.io/badge/GitHub-yourusername-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/yourusername)
+[GitHub](https://github.com/007sandesh/DeepShield)
 
 </div>

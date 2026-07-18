@@ -109,54 +109,79 @@ class ForgeryDetector(BaseModel):
     Deepfake detection using fine-tuned vision backbone.
 
     Supports:
-    - Custom XceptionNet (default)
-    - HuggingFace EfficientNet
+    - EfficientNet-B4 with DeepShield Celeb-DF / FF++ weights (default)
+    - Custom XceptionNet fallback
     - HuggingFace ViT
-    - ONNX runtime inference
     """
 
     model_type = ModelType.FORGERY_DETECTION
     model_name = "forgery_detector"
 
+    DEFAULT_WEIGHT_PATHS = {
+        "efficientnet": "models/weights/efficientnet_celebdf.pt",
+        "xception": "models/weights/xception_ffpp.pt",
+        "vit": "models/weights/vit_face_forensics.pt",
+    }
+
     def __init__(
         self,
-        backbone: str = "xception",
+        backbone: str = "efficientnet",
         device: str = "auto",
         use_pretrained: bool = True,
+        weights_path: Optional[str] = None,
     ) -> None:
         super().__init__(device=device)
         self.backbone = backbone
         self.use_pretrained = use_pretrained
+        self._weights_path = weights_path
         self._net = None
         self._transform = None
-        self.load_weights()
+        self._input_size = 256
+        # Index mapping used by predict(); overwritten when a checkpoint declares class names
+        self._class_to_idx = {"real": 0, "fake": 1}
+        self.load_weights(weights_path)
 
     def load_weights(self, weights_path: Optional[str] = None) -> None:
-        """Load forgery detection model."""
+        """Load forgery detection model and trained checkpoint when available."""
+        from pathlib import Path
         import time
+
         start = time.perf_counter()
+        weights_path = weights_path or self._weights_path
+        if weights_path is None:
+            default = Path(self.DEFAULT_WEIGHT_PATHS.get(self.backbone, ""))
+            if default.exists():
+                weights_path = str(default)
 
-        if self.backbone == "xception":
+        if self.backbone == "efficientnet":
+            self._net = self._build_efficientnet()
+            self._input_size = 380
+            if weights_path:
+                self._load_efficientnet_checkpoint(weights_path)
+            elif self.use_pretrained:
+                logger.warning(
+                    "EfficientNet deepfake weights missing; using ImageNet features only"
+                )
+
+        elif self.backbone == "xception":
             self._net = ForgeryDetectorNet(num_classes=2)
-            if self.use_pretrained and weights_path is None:
-                # Will download from HuggingFace Hub
-                logger.info("Using XceptionNet with ImageNet pre-trained features")
-
-        elif self.backbone == "efficientnet":
-            from torchvision.models import efficientnet_b4, EfficientNet_B4_Weights
-            weights = EfficientNet_B4_Weights.IMAGENET1K_V1 if self.use_pretrained else None
-            base = efficientnet_b4(weights=weights)
-            # Replace classifier for binary classification
-            base.classifier = nn.Sequential(
-                nn.Dropout(p=0.3, inplace=True),
-                nn.Linear(1792, 2),
-            )
-            self._net = base
+            self._input_size = 256
+            if weights_path:
+                loaded = self._try_load_state_dict(weights_path, strict=False)
+                if loaded:
+                    logger.info(f"Loaded Xception weights from {weights_path}")
+                else:
+                    logger.warning(
+                        "Xception checkpoint architecture mismatch; using random weights"
+                    )
+            else:
+                logger.warning("No Xception checkpoint found; using random weights")
 
         elif self.backbone == "vit":
             from transformers import ViTForImageClassification, ViTConfig
+
             config = ViTConfig(
-                image_size=256,
+                image_size=224,
                 patch_size=16,
                 num_hidden_layers=12,
                 hidden_size=768,
@@ -164,41 +189,103 @@ class ForgeryDetector(BaseModel):
                 num_labels=2,
             )
             self._net = ViTForImageClassification(config)
-            if self.use_pretrained:
-                # Use pre-trained ViT weights as starting point
+            self._input_size = 224
+            if weights_path:
+                self._try_load_state_dict(weights_path, strict=False)
+            elif self.use_pretrained:
                 from transformers import ViTModel
+
                 pretrained = ViTModel.from_pretrained("google/vit-base-patch16-224")
                 self._net.vit.load_state_dict(pretrained.state_dict(), strict=False)
 
-        self._net = self._net.to(self.device).eval()
+        else:
+            raise ValueError(f"Unsupported backbone: {self.backbone}")
 
-        # ImageNet normalization
+        self._net = self._net.to(self.device).eval()
         self._transform_params = {
             "mean": [0.485, 0.456, 0.406],
             "std": [0.229, 0.224, 0.225],
         }
-
         self._is_loaded = True
         self._load_time_ms = (time.perf_counter() - start) * 1000
         logger.info(
-            f"Forgery detector ({self.backbone}) loaded in {self._load_time_ms:.1f}ms"
+            f"Forgery detector ({self.backbone}) loaded in {self._load_time_ms:.1f}ms "
+            f"[classes={self._class_to_idx}]"
         )
+
+    def _build_efficientnet(self) -> nn.Module:
+        from torchvision.models import efficientnet_b4
+
+        base = efficientnet_b4(weights=None)
+        # Match XADE / Celeb-DF checkpoint classifier layout
+        base.classifier = nn.Sequential(
+            nn.Dropout(p=0.3, inplace=True),
+            nn.Linear(1792, 512),
+            nn.ReLU(inplace=True),
+            nn.BatchNorm1d(512),
+            nn.Dropout(p=0.3, inplace=True),
+            nn.Linear(512, 2),
+        )
+        return base
+
+    def _load_efficientnet_checkpoint(self, weights_path: str) -> None:
+        """Load EfficientNet-B4 deepfake detector checkpoint."""
+        checkpoint = torch.load(weights_path, map_location=self.device, weights_only=False)
+
+        if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint:
+            state_dict = checkpoint["model_state_dict"]
+            class_names = checkpoint.get("class_names")
+            if class_names and len(class_names) == 2:
+                self._class_to_idx = {
+                    str(name).lower(): idx for idx, name in enumerate(class_names)
+                }
+            logger.info(
+                f"EfficientNet checkpoint epoch={checkpoint.get('epoch')} "
+                f"val_acc={checkpoint.get('val_acc')}"
+            )
+        else:
+            state_dict = checkpoint
+
+        # Strip optional "model." prefix from DataParallel / wrapper saves
+        cleaned = {
+            (k[len("model.") :] if k.startswith("model.") else k): v
+            for k, v in state_dict.items()
+        }
+        missing, unexpected = self._net.load_state_dict(cleaned, strict=False)
+        if missing or unexpected:
+            logger.warning(
+                f"EfficientNet load warnings missing={missing} unexpected={unexpected}"
+            )
+        else:
+            logger.info(f"Loaded EfficientNet deepfake weights from {weights_path}")
+
+    def _try_load_state_dict(self, weights_path: str, strict: bool = False) -> bool:
+        try:
+            state = torch.load(weights_path, map_location=self.device, weights_only=False)
+            if isinstance(state, dict) and "state_dict" in state:
+                state = state["state_dict"]
+            elif isinstance(state, dict) and "model_state_dict" in state:
+                state = state["model_state_dict"]
+            missing, unexpected = self._net.load_state_dict(state, strict=strict)
+            ok = len(missing) == 0 and len(unexpected) == 0
+            if not ok:
+                logger.debug(f"Partial load missing={len(missing)} unexpected={len(unexpected)}")
+            return ok or (len(missing) < len(state) // 2)
+        except Exception as e:
+            logger.warning(f"Failed to load weights from {weights_path}: {e}")
+            return False
 
     def _preprocess(self, image: np.ndarray) -> torch.Tensor:
         """Convert BGR image to normalized tensor."""
         import cv2
 
-        # BGR -> RGB
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        # Resize
-        rgb = cv2.resize(rgb, (256, 256), interpolation=cv2.INTER_LANCZOS4)
-        # To float tensor [0, 1]
+        size = self._input_size
+        rgb = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_LANCZOS4)
         tensor = torch.from_numpy(rgb).float().permute(2, 0, 1) / 255.0
-        # Normalize
         mean = torch.tensor(self._transform_params["mean"]).view(3, 1, 1)
         std = torch.tensor(self._transform_params["std"]).view(3, 1, 1)
         tensor = (tensor - mean) / std
-        # Add batch dimension
         return tensor.unsqueeze(0).to(self.device)
 
     @torch.no_grad()
@@ -213,14 +300,20 @@ class ForgeryDetector(BaseModel):
             ModelOutput with prediction and confidence
         """
         tensor = self._preprocess(input_data)
-
         result, elapsed = self._measure_inference(self._forward, tensor)
 
-        probs = F.softmax(result, dim=-1).squeeze().cpu().numpy()
-        fake_prob = float(probs[1])
-        real_prob = float(probs[0])
+        if hasattr(result, "logits"):
+            logits = result.logits
+        else:
+            logits = result
 
-        prediction = "fake" if fake_prob > 0.5 else "real"
+        probs = F.softmax(logits, dim=-1).squeeze().cpu().numpy()
+        fake_idx = int(self._class_to_idx.get("fake", 1))
+        real_idx = int(self._class_to_idx.get("real", 0))
+        fake_prob = float(probs[fake_idx])
+        real_prob = float(probs[real_idx])
+
+        prediction = "fake" if fake_prob >= real_prob else "real"
         confidence = max(fake_prob, real_prob)
 
         return ModelOutput(
@@ -229,7 +322,8 @@ class ForgeryDetector(BaseModel):
             probabilities={"real": real_prob, "fake": fake_prob},
             metadata={
                 "backbone": self.backbone,
-                "logits": result.squeeze().cpu().numpy().tolist(),
+                "logits": logits.squeeze().cpu().numpy().tolist(),
+                "class_to_idx": self._class_to_idx,
             },
             inference_time_ms=elapsed,
         )

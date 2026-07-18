@@ -181,9 +181,18 @@ class AttentionNetwork(BaseModel):
 
     def _analyze_attention_patterns(self, attention_maps: list[torch.Tensor]) -> dict[str, Any]:
         """Analyze attention patterns for anomalies."""
-        # Use last layer attention
-        last_attn = attention_maps[-1][0, :, 0, 1:]  # CLS token attention to patches
-        attn_np = last_attn.cpu().numpy()
+        # MultiheadAttention returns (B, L, S) when average_attn_weights=True (default),
+        # or (B, num_heads, L, S) when average_attn_weights=False.
+        last_attn = attention_maps[-1]
+        if last_attn.dim() == 4:
+            attn_np = last_attn[0, :, 0, 1:].detach().cpu().numpy()
+            patch_scores = attn_np.mean(axis=0)
+        elif last_attn.dim() == 3:
+            patch_scores = last_attn[0, 0, 1:].detach().cpu().numpy()
+            attn_np = patch_scores[np.newaxis, :]
+        else:
+            patch_scores = np.zeros(1, dtype=np.float32)
+            attn_np = patch_scores[np.newaxis, :]
 
         # Attention entropy (uniformity measure)
         attn_probs = np.exp(attn_np) / (np.exp(attn_np).sum(axis=-1, keepdims=True) + 1e-8)
@@ -193,17 +202,15 @@ class AttentionNetwork(BaseModel):
         # Attention uniformity (high = suspicious for deepfakes)
         uniformity = float(np.std(attn_np))
 
-        # Patch-level scores (attention to each patch)
-        patch_scores = attn_np.mean(axis=0)
         num_patches = len(patch_scores)
         grid_size = int(np.sqrt(num_patches))
 
         # Reshape to spatial grid
-        if grid_size * grid_size == num_patches:
-            spatial_scores = patch_scores.reshape(grid_size, grid_size)
+        if grid_size * grid_size == num_patches and num_patches > 0:
+            spatial_scores = patch_scores.reshape(grid_size, grid_size).astype(np.float64)
             spatial_scores = cv2.resize(spatial_scores, (256, 256))
         else:
-            spatial_scores = np.zeros((256, 256))
+            spatial_scores = np.zeros((256, 256), dtype=np.float64)
 
         # Detect manipulation boundaries (high gradient in attention)
         grad_x = cv2.Sobel(spatial_scores, cv2.CV_64F, 1, 0, ksize=3)
@@ -212,8 +219,11 @@ class AttentionNetwork(BaseModel):
         boundary_score = float(np.mean(boundary_map))
 
         # Count anomalous patches (attention > 2 standard deviations)
-        threshold = np.mean(patch_scores) + 2 * np.std(patch_scores)
-        num_anomalous = int(np.sum(patch_scores > threshold))
+        if len(patch_scores) > 0:
+            threshold = float(np.mean(patch_scores) + 2 * np.std(patch_scores))
+            num_anomalous = int(np.sum(patch_scores > threshold))
+        else:
+            num_anomalous = 0
 
         return {
             "entropy": mean_entropy,

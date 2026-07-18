@@ -71,12 +71,13 @@ class EnsembleClassifier(BaseModel):
     model_name = "ensemble"
 
     DEFAULT_WEIGHTS = {
-        "frequency": 0.15,
-        "temporal": 0.20,
-        "biological": 0.15,
-        "attention": 0.25,
-        "audio_sync": 0.10,
-        "forgery": 0.15,
+        "ai_image_detector": 0.40,
+        "forgery_detector": 0.25,
+        "frequency_analyzer": 0.15,
+        "attention_network": 0.10,
+        "temporal_analyzer": 0.05,
+        "biological_signals": 0.03,
+        "audio_sync": 0.02,
     }
 
     def __init__(self, device: str = "auto", **kwargs) -> None:
@@ -141,6 +142,7 @@ class EnsembleClassifier(BaseModel):
         model_outputs: dict[str, dict[str, float]] = {}
         model_scores: list[float] = []
         model_weights: list[float] = []
+        full_image = kwargs.get("full_image")
 
         for name, model in self._models.items():
             if not model.is_loaded:
@@ -148,7 +150,12 @@ class EnsembleClassifier(BaseModel):
                 continue
 
             try:
-                output = model.predict(input_data, **kwargs)
+                model_input = (
+                    full_image
+                    if name == "ai_image_detector" and full_image is not None
+                    else input_data
+                )
+                output = model.predict(model_input)
                 model_outputs[name] = {
                     "prediction": output.prediction,
                     "confidence": output.confidence,
@@ -186,6 +193,14 @@ class EnsembleClassifier(BaseModel):
         # Combine methods
         final_score = 0.5 * weighted_avg + 0.5 * learned_score
 
+        # High-confidence generative-AI hits should not be diluted by
+        # face-swap-only backbones that were trained on different artifacts.
+        ai_out = model_outputs.get("ai_image_detector")
+        if ai_out is not None and ai_out["fake_prob"] >= 0.90:
+            final_score = max(final_score, 0.75 * ai_out["fake_prob"] + 0.25 * final_score)
+        elif ai_out is not None and ai_out["real_prob"] >= 0.90:
+            final_score = min(final_score, 0.75 * (1.0 - ai_out["real_prob"]) + 0.25 * final_score)
+
         # Model agreement analysis
         predictions = [o["prediction"] for o in model_outputs.values()]
         agreement = max(
@@ -193,15 +208,15 @@ class EnsembleClassifier(BaseModel):
             predictions.count("fake"),
         ) / len(predictions)
 
-        # Confidence calibration
-        confidence = self._calibrate_confidence(final_score, agreement)
-
-        prediction = "fake" if final_score > 0.5 else "real"
+        prediction = "fake" if final_score >= 0.5 else "real"
+        class_probability = final_score if prediction == "fake" else (1.0 - final_score)
+        # Soft-calibrate: keep class probability primary, nudge by agreement
+        confidence = float(np.clip(0.85 * class_probability + 0.15 * agreement, 0.01, 0.99))
 
         return {
             "prediction": prediction,
             "confidence": confidence,
-            "probabilities": {"real": 1 - final_score, "fake": final_score},
+            "probabilities": {"real": 1.0 - final_score, "fake": final_score},
             "contributions": model_outputs,
             "agreement": float(agreement),
             "num_models": len(model_outputs),
@@ -209,6 +224,7 @@ class EnsembleClassifier(BaseModel):
                 "weighted_average": weighted_avg,
                 "learned_score": learned_score,
                 "final_score": final_score,
+                "class_probability": class_probability,
                 "method": "calibrated_ensemble",
             },
         }

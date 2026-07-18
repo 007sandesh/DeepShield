@@ -253,10 +253,11 @@ class FaceExtractor:
         angle = np.degrees(np.arctan2(dy, dx))
 
         # Center between eyes
-        center = ((left_eye + right_eye) / 2).astype(int)
+        center = ((left_eye + right_eye) / 2)
+        center_pt = (float(center[0]), float(center[1]))
 
         # Rotate
-        M = cv2.getRotationMatrix2D(tuple(center), angle, 1.0)
+        M = cv2.getRotationMatrix2D(center_pt, float(angle), 1.0)
         aligned = cv2.warpAffine(
             image, M, (image.shape[1], image.shape[0]),
             flags=cv2.INTER_LINEAR,

@@ -102,6 +102,7 @@ class FrequencyAnalyzer(BaseModel):
                 "dct_score": result["dct_score"],
                 "band_energy": result["band_energy"],
                 "noise_pattern": result["noise_pattern"],
+                "smoothness_score": result.get("smoothness_score", 0.0),
             },
             explainability={
                 "fft_magnitude": result["fft_visualization"],
@@ -133,12 +134,14 @@ class FrequencyAnalyzer(BaseModel):
             logits = self._net(tensor)
             probs = torch.softmax(logits, dim=-1).squeeze().cpu().numpy()
 
-        # Combine scores
+        # Combine scores — prefer classical spectral cues over untrained CNN head
+        smoothness_score = self._analyze_texture_smoothness(resized)
         combined_score = (
-            0.3 * fft_score +
-            0.3 * dct_score +
-            0.2 * noise_pattern +
-            0.2 * float(probs[1])
+            0.25 * fft_score
+            + 0.20 * dct_score
+            + 0.20 * noise_pattern
+            + 0.25 * smoothness_score
+            + 0.10 * float(probs[1])
         )
 
         return {
@@ -149,6 +152,7 @@ class FrequencyAnalyzer(BaseModel):
             "dct_score": dct_score,
             "band_energy": band_energy,
             "noise_pattern": noise_pattern,
+            "smoothness_score": smoothness_score,
             "fft_visualization": fft_vis,
             "dct_visualization": dct_vis,
         }
@@ -275,6 +279,27 @@ class FrequencyAnalyzer(BaseModel):
         score = float(np.clip(grid_score * 0.5 + regularity * 0.01, 0, 1))
 
         return score
+
+    def _analyze_texture_smoothness(self, gray: np.ndarray) -> float:
+        """
+        Score how unnaturally smooth an image is.
+
+        Diffusion / ChatGPT-style portraits often lack natural facial
+        micro-texture (pores, fine noise), producing very low Laplacian variance.
+        """
+        lap_var = float(cv2.Laplacian(gray.astype(np.float64), cv2.CV_64F).var())
+        # Empirically: natural cropped faces often >> 100; heavy AI smoothing << 40
+        if lap_var < 25:
+            score = 0.95
+        elif lap_var < 50:
+            score = 0.80
+        elif lap_var < 90:
+            score = 0.55
+        elif lap_var < 150:
+            score = 0.30
+        else:
+            score = 0.10
+        return float(score)
 
     def _to_tensor(self, image: np.ndarray) -> torch.Tensor:
         """Convert image to model input tensor."""
