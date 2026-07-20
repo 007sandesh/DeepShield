@@ -25,6 +25,7 @@ class AudioData:
     spectrogram: Optional[np.ndarray] = None  # Mel spectrogram
     mel_features: Optional[np.ndarray] = None  # Extracted mel features
     phonemes: Optional[list[dict]] = None  # Phoneme timestamps
+    waveform_path: Optional[str] = None  # Path to saved WAV file (if kept)
 
 
 class AudioProcessor:
@@ -56,7 +57,8 @@ class AudioProcessor:
             video_path: Path to video file
 
         Returns:
-            AudioData or None if extraction fails
+            AudioData with waveform data and path to saved WAV file,
+            or None if extraction fails.
         """
         try:
             import subprocess
@@ -82,13 +84,13 @@ class AudioProcessor:
 
             if result.returncode != 0:
                 logger.warning(f"ffmpeg extraction failed: {result.stderr}")
+                Path(tmp_path).unlink(missing_ok=True)
                 return None
 
-            # Load extracted audio
+            # Load extracted audio into memory
             audio_data = self._load_audio(tmp_path)
-
-            # Cleanup
-            Path(tmp_path).unlink(missing_ok=True)
+            # Keep the WAV file path so downstream models can read it
+            audio_data.waveform_path = tmp_path
 
             return audio_data
 

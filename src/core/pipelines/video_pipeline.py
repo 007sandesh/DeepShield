@@ -64,6 +64,7 @@ class VideoDetectionPipeline:
             "frequency_analyzer",
             "attention_network",
             "temporal_analyzer",
+            "ai_image_detector",
             "audio_sync",
         ]
 
@@ -163,10 +164,16 @@ class VideoDetectionPipeline:
 
             for name, model in self._models.items():
                 if name in ("temporal_analyzer", "audio_sync"):
-                    continue  # Skip temporal-only models for per-frame
+                    continue  # Skip temporal/audio-only models for per-frame
 
                 try:
-                    output = model.predict(face.image)
+                    # AI-image detector works best on the full frame
+                    model_input = (
+                        frames[frame_face_map[idx]]
+                        if name == "ai_image_detector"
+                        else face.image
+                    )
+                    output = model.predict(model_input)
                     frame_result["models"][name] = {
                         "prediction": output.prediction,
                         "confidence": output.confidence,
@@ -196,7 +203,7 @@ class VideoDetectionPipeline:
 
                 audio_sync_result = self._models["audio_sync"].predict(
                     mid_frames,
-                    audio_path=str(audio_data.waveform),  # Simplified
+                    audio_path=audio_data.waveform_path,  # WAV file path, not str(waveform)
                     fps=video_fps,
                 )
                 logger.info(
@@ -222,6 +229,11 @@ class VideoDetectionPipeline:
         final_result["performance"]["model_times_ms"] = {
             k: round(v, 2) for k, v in model_times_accum.items()
         }
+
+        # Cleanup temp audio file
+        if has_audio and audio_data and audio_data.waveform_path:
+            from pathlib import Path as _Path
+            _Path(audio_data.waveform_path).unlink(missing_ok=True)
 
         logger.info(
             f"Video analysis complete: {final_result['prediction']} "

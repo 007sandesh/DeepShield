@@ -95,8 +95,16 @@ def detect(
                 pipeline = ImageDetectionPipeline(device=device)
                 pipeline.initialize()
                 progress.update(task, description="Running image analysis...")
-                result = pipeline.detect(str(file_path))
-                result = result.to_dict()
+                det_result = pipeline.detect(str(file_path))
+                result = det_result.to_dict()
+
+                # Apply --threshold: override final prediction if confidence < threshold
+                if result.get("confidence", 0) < threshold:
+                    result["prediction"] = "UNCERTAIN"
+                    result["note"] = (
+                        f"Confidence {result['confidence']:.1%} below threshold {threshold:.1%}; "
+                        "original prediction suppressed."
+                    )
 
             progress.update(task, description="Complete!", completed=1)
 
@@ -106,7 +114,7 @@ def detect(
             raise typer.Exit(1)
 
     # Display results
-    _display_result(result, verbose, threshold)
+    _display_result(result, verbose, threshold, no_explain=no_explain)
 
     # Export if requested
     if output:
@@ -257,7 +265,7 @@ def info():
     console.print(table)
 
 
-def _display_result(result: dict, verbose: bool, threshold: float):
+def _display_result(result: dict, verbose: bool, threshold: float, no_explain: bool = False):
     """Display detection result with rich formatting."""
     prediction = result.get("prediction", "UNKNOWN")
     confidence = result.get("confidence", 0)
@@ -286,8 +294,25 @@ def _display_result(result: dict, verbose: bool, threshold: float):
         )
     )
 
-    # Explanation
-    if result.get("explanation"):
+    # Dual scores (AI-gen vs face-forgery)
+    ai_gen = result.get("ai_gen_score")
+    face_forgery = result.get("face_forgery_score")
+    if ai_gen is not None or face_forgery is not None:
+        parts = []
+        if ai_gen is not None:
+            label = "AI-generated" if ai_gen > 0.5 else "Authentic-looking"
+            parts.append(f"🤖 AI-Gen: [bold]{ai_gen:.1%}[/bold] ({label})")
+        if face_forgery is not None:
+            label = "Face Forgery" if face_forgery > 0.5 else "Authentic"
+            parts.append(f"👤 Face Forgery: [bold]{face_forgery:.1%}[/bold] ({label})")
+        console.print("\n" + " | ".join(parts))
+
+    # Threshold note
+    if result.get("note"):
+        console.print(f"\n⚠️  [yellow]{result['note']}[/yellow]")
+
+    # Explanation (skipped with --no-explain)
+    if not no_explain and result.get("explanation"):
         console.print(f"\n💡 [bold]Explanation:[/bold] {result['explanation']}")
 
     # Faces

@@ -1,0 +1,209 @@
+{
+  "benchmark_date": "2026-07-20 22:58:35",
+  "device": "cpu",
+  "stats": [
+    {
+      "category": "real",
+      "total": 6,
+      "correct": 6,
+      "incorrect": 0,
+      "accuracy": 1.0
+    },
+    {
+      "category": "fake",
+      "total": 8,
+      "correct": 7,
+      "incorrect": 1,
+      "accuracy": 0.875
+    },
+    {
+      "category": "ai_generated",
+      "total": 1,
+      "correct": 1,
+      "incorrect": 0,
+      "accuracy": 1.0
+    }
+  ],
+  "results": [
+    {
+      "file": "benchmark_data\\real\\real_man_01.jpg",
+      "prediction": "REAL",
+      "confidence": 0.874,
+      "probability": {
+        "real": 0.874,
+        "fake": 0.126
+      },
+      "ai_gen_score": 0.0055,
+      "face_forgery_score": 0.126,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\real\\real_man_02.jpg",
+      "prediction": "REAL",
+      "confidence": 0.8961,
+      "probability": {
+        "real": 0.8961,
+        "fake": 0.1039
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.1039,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\real\\real_man_03.jpg",
+      "prediction": "REAL",
+      "confidence": 0.6813,
+      "probability": {
+        "real": 0.6813,
+        "fake": 0.3187
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.3187,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\real\\real_woman_01.jpg",
+      "prediction": "REAL",
+      "confidence": 0.8599,
+      "probability": {
+        "real": 0.8599,
+        "fake": 0.1401
+      },
+      "ai_gen_score": 0.0028,
+      "face_forgery_score": 0.1401,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\real\\real_woman_02.jpg",
+      "prediction": "REAL",
+      "confidence": 0.9035,
+      "probability": {
+        "real": 0.9035,
+        "fake": 0.0965
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.0965,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\real\\real_woman_03.jpg",
+      "prediction": "REAL",
+      "confidence": 0.7058,
+      "probability": {
+        "real": 0.7058,
+        "fake": 0.2942
+      },
+      "ai_gen_score": 0.2942,
+      "face_forgery_score": 0.1951,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_01.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.798,
+      "probability": {
+        "real": 0.202,
+        "fake": 0.798
+      },
+      "ai_gen_score": 0.0001,
+      "face_forgery_score": 0.798,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_02.jpg",
+      "prediction": "REAL",
+      "confidence": 0.572,
+      "probability": {
+        "real": 0.572,
+        "fake": 0.428
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.428,
+      "correct": false
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_03.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.9937,
+      "probability": {
+        "real": 0.0063,
+        "fake": 0.9937
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.9937,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_04.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.9162,
+      "probability": {
+        "real": 0.0838,
+        "fake": 0.9162
+      },
+      "ai_gen_score": 0.0005,
+      "face_forgery_score": 0.9162,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_05.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.8813,
+      "probability": {
+        "real": 0.1187,
+        "fake": 0.8813
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.8813,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_06.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.751,
+      "probability": {
+        "real": 0.249,
+        "fake": 0.751
+      },
+      "ai_gen_score": 0.0002,
+      "face_forgery_score": 0.751,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_07.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.8302,
+      "probability": {
+        "real": 0.1698,
+        "fake": 0.8302
+      },
+      "ai_gen_score": 0.0,
+      "face_forgery_score": 0.8302,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\fake\\faceswap_08.jpg",
+      "prediction": "FAKE",
+      "confidence": 0.958,
+      "probability": {
+        "real": 0.042,
+        "fake": 0.958
+      },
+      "ai_gen_score": 0.0001,
+      "face_forgery_score": 0.958,
+      "correct": true
+    },
+    {
+      "file": "benchmark_data\\ai_generated\\chatgpt_portrait.png",
+      "prediction": "FAKE",
+      "confidence": 0.9971,
+      "probability": {
+        "real": 0.0029,
+        "fake": 0.9971
+      },
+      "ai_gen_score": 0.9971,
+      "face_forgery_score": 0.0605,
+      "correct": true
+    }
+  ]
+}

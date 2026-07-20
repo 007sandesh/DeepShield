@@ -45,8 +45,8 @@ class ModelConfig(BaseSettings):
         description="Face detection model: retinaface, mtcnn, mediapipe",
     )
     forgery_detector: str = Field(
-        default="xceptionnet",
-        description="Forgery detection backbone: xceptionnet, efficientnet, vit",
+        default="ensemble",
+        description="Forgery detection backbone: ensemble, efficientnet, xception, vit",
     )
     audio_model: str = Field(
         default="whisper-base",

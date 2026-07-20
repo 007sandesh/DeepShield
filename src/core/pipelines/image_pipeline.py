@@ -32,6 +32,10 @@ class DetectionResult:
         default_factory=lambda: {"real": 0.5, "fake": 0.5}
     )
 
+    # Dual scores
+    ai_gen_score: Optional[float] = None  # AI-generated image score
+    face_forgery_score: Optional[float] = None  # Face-swap forgery score
+
     # Per-model breakdown
     model_results: dict[str, dict[str, Any]] = field(default_factory=dict)
 
@@ -60,7 +64,7 @@ class DetectionResult:
         total = real_p + fake_p
         if total > 0:
             real_p, fake_p = real_p / total, fake_p / total
-        return {
+        result = {
             "prediction": self.prediction,
             "confidence": round(self.confidence, 4),
             "probability": {
@@ -76,6 +80,11 @@ class DetectionResult:
                 "model_times_ms": self.model_times_ms,
             },
         }
+        if self.ai_gen_score is not None:
+            result["ai_gen_score"] = round(self.ai_gen_score, 4)
+        if self.face_forgery_score is not None:
+            result["face_forgery_score"] = round(self.face_forgery_score, 4)
+        return result
 
 
 class ImageDetectionPipeline:
@@ -106,8 +115,6 @@ class ImageDetectionPipeline:
         self._model_names = models or [
             "ai_image_detector",
             "forgery_detector",
-            "frequency_analyzer",
-            "attention_network",
         ]
 
     def initialize(self) -> None:
@@ -192,7 +199,8 @@ class ImageDetectionPipeline:
             f"confidence={best_face.confidence:.2f}"
         )
 
-        # Run models
+        # Run models — cache raw ModelOutput objects for ensemble to avoid re-inference
+        model_results_raw: dict[str, ModelOutput] = {}
         model_results = {}
         model_times = {}
 
@@ -201,6 +209,7 @@ class ImageDetectionPipeline:
                 # Generative-AI detectors work best on the full frame
                 model_input = image if name == "ai_image_detector" else best_face.image
                 output = model.predict(model_input)
+                model_results_raw[name] = output
                 model_results[name] = output.to_dict()
                 model_times[name] = output.inference_time_ms
 
@@ -214,17 +223,25 @@ class ImageDetectionPipeline:
                 logger.error(f"  {name} failed: {e}")
                 model_results[name] = {"error": str(e)}
 
-        # Ensemble prediction
+        # Ensemble prediction — pass cached model results to avoid double inference
         probabilities = {"real": 0.5, "fake": 0.5}
+        ai_gen_score = None
+        face_forgery_score = None
         if self._ensemble:
             try:
                 ensemble_output = self._ensemble.predict(
-                    best_face.image, full_image=image
+                    best_face.image,
+                    model_results=model_results_raw,  # cached — no re-run
+                    full_image=image,
                 )
                 probabilities = {
                     "real": float(ensemble_output.probabilities.get("real", 0.5)),
                     "fake": float(ensemble_output.probabilities.get("fake", 0.5)),
                 }
+                # Extract dual scores from ensemble metadata
+                meta = ensemble_output.metadata or {}
+                ai_gen_score = meta.get("ai_gen_score")
+                face_forgery_score = meta.get("face_forgery_score")
                 final_prediction, final_confidence, probabilities = self._resolve_prediction(
                     probabilities
                 )
@@ -252,6 +269,8 @@ class ImageDetectionPipeline:
             prediction=final_prediction,
             confidence=final_confidence,
             probabilities=probabilities,
+            ai_gen_score=ai_gen_score,
+            face_forgery_score=face_forgery_score,
             model_results=model_results,
             faces_detected=len(faces),
             best_face_quality=best_face.quality_score,

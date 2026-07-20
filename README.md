@@ -35,8 +35,8 @@
 </table>
 </div>
 
-[![Focus](https://img.shields.io/badge/Focus-Face%20Deepfakes-blueviolet?style=for-the-badge)](#-what-deepshield-detects-today)
-[![Models](https://img.shields.io/badge/Models-EfficientNet%20%2B%20Ensemble-success?style=for-the-badge)](#-how-it-works)
+[![Focus](https://img.shields.io/badge/Focus-Face%20Deepfakes%20%2B%20AI%20Gen-blueviolet?style=for-the-badge)](#-what-deepshield-detects-today)
+[![Models](https://img.shields.io/badge/Models-EfficientNet%20%2B%20AI%20Detector%20%2B%20Ensemble-success?style=for-the-badge)](#-how-it-works)
 [![CLI](https://img.shields.io/badge/Interface-CLI%20%2B%20API-orange?style=for-the-badge)](#-quick-start)
 
 </div>
@@ -45,12 +45,13 @@
 
 ## Why DeepShield?
 
-Deepfakes are getting better — DeepShield gives you a practical way to check images and videos for **face manipulation and forgery**. Multiple specialized models examine the same media, then an ensemble combines their signals into one clear verdict: **REAL** or **FAKE**, with confidence and a short explanation.
+Deepfakes are getting better — DeepShield gives you a practical way to check images for **face manipulation, forgery, and AI-generated content**. Multiple specialized models examine the same media, then an ensemble combines their signals into one clear verdict: **REAL** or **FAKE**, with confidence and a short explanation.
 
 | Strength | What you get |
 |----------|----------------|
-| **Strong on face deepfakes** | EfficientNet-B4 weights trained on Celeb-DF / FaceForensics-style face-swap data |
-| **Multi-signal analysis** | Spatial forgery, frequency cues, and attention — not a single black-box score |
+| **Face deepfakes** | EfficientNet-B4 weights trained on Celeb-DF / FaceForensics-style face-swap data |
+| **AI-generated images** | HuggingFace `Organika/sdxl-detector` classifies synthetic vs authentic stills |
+| **Multi-signal analysis** | Spatial forgery, frequency cues, and AI-gen scoring — not a single black-box score |
 | **Explainable output** | Human-readable explanations and per-model breakdowns |
 | **Easy to run** | One CLI command after downloading weights |
 | **Open & extensible** | MIT license, FastAPI surface, Docker-friendly layout |
@@ -59,15 +60,18 @@ Deepfakes are getting better — DeepShield gives you a practical way to check i
 
 ## What DeepShield Detects Today
 
-DeepShield is tuned for **face-centric deepfakes** — swaps, reenactment, and related facial forgery patterns common in research benchmarks and real-world clips.
+DeepShield handles **two detection domains** with dedicated backends:
 
-**Well suited for:**
-- Face-swap and face-reenactment deepfakes
-- Portraits / talking-head style media with a clear face
-- Offline forensic checks via CLI or API
+### 1. Face-Swap / Deepfake Still Detection (face crop)
+Face-centric deepfakes — swaps, reenactment, and related facial forgery patterns:
+- EfficientNet-B4 loaded with Celeb-DF / FaceForensics-trained checkpoint
+- Frequency analysis for spectral artifacts
 
-**Coming soon — AI-generated image detection:**
-Dedicated coverage for fully synthetic stills (e.g. ChatGPT Images, Midjourney, Stable Diffusion / SDXL). That capability is on the roadmap so DeepShield can flag both classic deepfakes **and** generative AI media with the same clarity.
+### 2. AI-Generated Image Detection (full frame)
+Fully synthetic stills from generative-AI models:
+- HuggingFace `Organika/sdxl-detector` — classifies ChatGPT Images, Midjourney, Stable Diffusion / SDXL, and similar generators
+
+**Both scores are surfaced in every result** — an image can be flagged as AI-generated even if the face crop looks authentic, and vice versa.
 
 ---
 
@@ -80,12 +84,12 @@ Dedicated coverage for fully synthetic stills (e.g. ChatGPT Images, Midjourney, 
 ### Multi-Layer Detection
 Independent analyzers run together, then fuse through a weighted ensemble.
 
-- **Forgery Detector** — EfficientNet-B4 face forgery scoring
+- **AI Image Detector** — Synthetic vs authentic stills (full frame)
+- **Forgery Detector** — EfficientNet-B4 face forgery scoring (face crop)
 - **Frequency Analysis** — Spectral / DCT-style artifact cues
-- **Attention Network** — Patch-level suspicion signals
 - **Ensemble** — Calibrated Real / Fake probabilities
 
-*Video pipelines also include temporal, biological, and audio-sync modules.*
+*Untrained models (attention_network, etc.) are gated out to prevent noise in the final score.*
 
 </td>
 <td width="50%">
@@ -94,6 +98,7 @@ Independent analyzers run together, then fuse through a weighted ensemble.
 Every run aims to be actionable, not just a number.
 
 - Real / Fake label with confidence
+- **Dual scores**: AI-Gen probability + Face Forgery probability
 - Per-model votes and timings
 - Plain-language explanation
 - Optional JSON export for tooling
@@ -120,7 +125,7 @@ Designed as a platform, not a one-off script.
 - Pluggable model registry
 - Face detection + alignment preprocessing
 - Configurable device (`cpu` / `cuda` / `auto`)
-- Tests for core pipeline behavior
+- Benchmark script for accuracy tracking
 
 </td>
 </tr>
@@ -135,28 +140,31 @@ Designed as a platform, not a one-off script.
 │                     DeepShield Pipeline                          │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  Input: Image / Video                                            │
+│  Input: Image                                                    │
 │       │                                                          │
-│       ▼                                                          │
-│  ┌──────────────────┐                                            │
-│  │  PREPROCESSING    │  Face detect → Align → Crop               │
-│  └────────┬─────────┘                                            │
-│           │                                                      │
-│           ▼                                                      │
-│  ┌─────────────────────────────────────────────────────────┐    │
-│  │           DETECTION LAYERS (parallel)                     │    │
-│  │                                                           │    │
-│  │  Forgery (EfficientNet) · Frequency · Attention           │    │
-│  │  (+ Temporal / Biological / Audio-Sync for video)         │    │
-│  └───────────────────────────┬─────────────────────────────┘    │
+│       ├──────────────────────────────────────────────────┐       │
+│       │                                                  │       │
+│       ▼                                                  ▼       │
+│  ┌──────────────────┐                        ┌────────────────┐  │
+│  │  FACE EXTRACTION  │                        │  FULL FRAME    │  │
+│  │  RetinaFace/CV2   │                        │                │  │
+│  └────────┬─────────┘                        └───────┬────────┘  │
+│           │                                          │           │
+│           ▼                                          ▼           │
+│  ┌────────────────────────┐              ┌────────────────────┐  │
+│  │  Forgery (EfficientNet)│              │  AI-Gen Detector   │  │
+│  │  Frequency Analysis    │              │  (Organika/sdxl)   │  │
+│  └────────────┬───────────┘              └────────┬───────────┘  │
+│               │                                   │              │
+│               └──────────────┬────────────────────┘              │
 │                              │                                   │
 │                              ▼                                   │
 │  ┌──────────────────┐                                            │
-│  │     ENSEMBLE      │  Weighted fusion + confidence             │
+│  │     ENSEMBLE      │  Weighted fusion + AI override            │
 │  └────────┬─────────┘                                            │
 │           │                                                      │
 │           ▼                                                      │
-│  Output: prediction · confidence · explanation · model details   │
+│  Output: prediction · confidence · AI-gen score · forgery score  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -195,6 +203,12 @@ python -m src.cli.main detect path/to/image.jpg --verbose
 
 # Or via entry point, if on PATH
 deepshield detect path/to/image.jpg -o result.json
+
+# Apply a confidence threshold (below = UNCERTAIN)
+deepshield detect path/to/image.jpg --threshold 0.7
+
+# Suppress explanation output
+deepshield detect path/to/image.jpg --no-explain
 ```
 
 ### 4. Optional: API server
@@ -202,6 +216,7 @@ deepshield detect path/to/image.jpg -o result.json
 ```bash
 deepshield serve
 # Docs: http://localhost:8000/docs
+# Metrics: http://localhost:8000/metrics
 ```
 
 ### Docker
@@ -220,6 +235,8 @@ pipeline.initialize()
 
 result = pipeline.detect("path/to/image.jpg")
 print(result.prediction, result.confidence, result.explanation)
+print(f"AI-gen score: {result.ai_gen_score}")
+print(f"Face forgery score: {result.face_forgery_score}")
 ```
 
 ---
@@ -227,12 +244,53 @@ print(result.prediction, result.confidence, result.explanation)
 ## How It Works
 
 1. **Face extraction** — RetinaFace (with OpenCV fallback) finds and aligns faces.
-2. **Forgery scoring** — EfficientNet-B4 loads Celeb-DF-style checkpoint weights for face Real/Fake classification.
-3. **Frequency cues** — Looks for unnatural smoothness / spectral patterns common in forged faces.
-4. **Attention** — Spot-checks patch-level inconsistency.
-5. **Ensemble** — Combines model probabilities into a calibrated final verdict.
+2. **AI-gen classification** — `Organika/sdxl-detector` (HuggingFace) runs on the full frame to detect synthetic media.
+3. **Forgery scoring** — EfficientNet-B4 loads Celeb-DF-style checkpoint weights for face Real/Fake classification.
+4. **Frequency cues** — Looks for unnatural smoothness / spectral patterns common in forged faces.
+5. **Ensemble** — Combines model probabilities; high-confidence AI-gen hits get an override boost.
 
-Upstream EfficientNet Celeb-DF checkpoint reports strong validation accuracy on face-forgery benchmarks (~98.5% val accuracy in the included weights metadata). Your real-world results depend on media quality, face size, compression, and deepfake type — always review the per-model breakdown when stakes are high.
+**Model weights status:**
+- `efficientnet_celebdf.pt` — Celeb-DF + FF++ trained checkpoint (~98.5% val accuracy in checkpoint metadata)
+- `Organika/sdxl-detector` — HuggingFace model, loaded at runtime (no local download needed)
+- `vit_face_forensics.pt` — **⚠ Generic ViT-B/16 base weights, NOT forensics-finetuned.** Used only when explicitly selected via `backbone="vit"`.
+- `xception_ffpp.pt` — FaceForensics++ checkpoint; architecture may not fully match (loaded with `strict=False`).
+
+Your real-world results depend on media quality, face size, compression, and deepfake type — always review the per-model breakdown when stakes are high.
+
+---
+
+## Benchmarking
+
+Run the benchmark script against your own data:
+
+```bash
+python scripts/benchmark.py --real-dir ./benchmark_data/real \
+                            --fake-dir ./benchmark_data/fake \
+                            --ai-dir ./benchmark_data/ai_generated \
+                            --output benchmark_results.json
+```
+
+### Domain adaptation (modern face-swaps)
+
+Off-the-shelf Celeb-DF weights often miss InsightFace / `inswapper` swaps. Industry practice is **transfer learning with a real-face replay buffer**:
+
+```bash
+# 1) Put train pairs in benchmark_data/finetune/{real,fake}
+# 2) Fine-tune last EfficientNet stages + head
+python scripts/finetune_faceswap.py --epochs 10 --device cpu
+
+# Writes models/weights/efficientnet_inswapper.pt (auto-loaded by the ensemble)
+```
+
+Expected directory layout:
+```
+benchmark_data/
+├── real/           # Authentic face images
+├── fake/           # Face-swap deepfakes
+└── ai_generated/   # ChatGPT, Midjourney, SDXL stills, etc.
+```
+
+The script reports overall accuracy, FPR (false positives on real faces), and FNR (missed fakes).
 
 ---
 
@@ -240,11 +298,16 @@ Upstream EfficientNet Celeb-DF checkpoint reports strong validation accuracy on 
 
 | Status | Item |
 |--------|------|
-| **Now** | Face deepfake image detection (EfficientNet + ensemble) |
-| **Now** | CLI, FastAPI scaffold, Docker layout, unit tests |
-| **Next** | Dedicated **AI-generated image** detection (ChatGPT / Midjourney / SDXL-class stills) |
-| **Next** | Stronger video end-to-end packaging and richer explainability UI |
-| **Later** | Broader adversarial evaluation and production hardening |
+| ✅ **Done** | Face deepfake image detection (EfficientNet + ensemble) |
+| ✅ **Done** | AI-generated image detection (Organika/sdxl-detector via HuggingFace) |
+| ✅ **Done** | Dual AI-gen / face-forgery score surfacing |
+| ✅ **Done** | Untrained model gating (attention_network excluded from vote) |
+| ✅ **Done** | Industry domain adaptation for InsightFace / inswapper face-swaps |
+| ✅ **Done** | Soft-vote forgery ensemble + calibrated thresholds |
+| ✅ **Done** | CLI `--threshold` and `--no-explain` flags |
+| ✅ **Done** | API `/metrics` endpoint |
+| 🔧 **Next** | Stronger video end-to-end packaging and richer explainability UI |
+| 🔧 **Next** | Broader adversarial evaluation and production hardening |
 
 ---
 
@@ -260,7 +323,9 @@ DeepShield/
 │   ├── api/                  # FastAPI app
 │   ├── cli/                  # Rich CLI
 │   └── config/               # Settings
-├── scripts/download_models.py
+├── scripts/
+│   ├── download_models.py    # Weight downloader
+│   └── benchmark.py          # Accuracy benchmark (FPR/FNR)
 ├── tests/
 ├── docker/
 ├── docs/
@@ -283,7 +348,7 @@ make test
 ## Tech Stack
 
 | Layer | Tools |
-|-------|--------|
+|-------|-------|
 | ML | PyTorch, timm, transformers |
 | Vision | OpenCV, RetinaFace, MediaPipe |
 | API / CLI | FastAPI, Typer, Rich |
@@ -313,13 +378,14 @@ MIT License — see [LICENSE](LICENSE).
 - [FaceForensics++](https://github.com/ondyari/FaceForensics) — Face forgery research dataset  
 - [Celeb-DF](https://github.com/yuezunli/celeb-deepfakeforensics) — Challenging deepfake benchmark  
 - [RetinaFace](https://github.com/biubug6/Pytorch_Retinaface) — Face detection  
+- [Organika/sdxl-detector](https://huggingface.co/Organika/sdxl-detector) — AI-generated image classification  
 - Community EfficientNet / Xception deepfake checkpoints on Hugging Face  
 
 ---
 
 <div align="center">
 
-**Built to help people trust what they see — starting with face deepfakes, expanding next to generative AI imagery.**
+**Built to help people trust what they see — face deepfakes and generative AI imagery.**
 
 [GitHub](https://github.com/007sandesh/DeepShield)
 

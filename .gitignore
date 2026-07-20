@@ -52,3 +52,9 @@ Thumbs.db
 
 # Docker
 .docker/
+
+# Local detection / training artifacts
+detect_result.json
+benchmark_data/finetune/
+ChatGPT Image*.png
+

@@ -1,8 +1,11 @@
 """
 Ensemble Meta-Classifier.
 
-Combines outputs from all detection layers using learned weights
-and produces the final prediction with calibrated confidence.
+Production fusion (research-backed):
+  - Domain specialists: AI-gen detector (full frame) + face-forgery ensemble (face crop)
+  - Final FAKE score = soft OR / max across domains (DeepDect / MIT ensemble practice)
+  - Never let "AI says real" suppress a face-forgery FAKE signal
+  - Untrained models (attention_network, CalibratedEnsemble) gated out by default
 """
 
 from __future__ import annotations
@@ -22,8 +25,9 @@ class CalibratedEnsemble(nn.Module):
     """
     Learned ensemble with temperature scaling for confidence calibration.
 
-    Instead of simple averaging, learns optimal combination weights
-    and calibrates output probabilities.
+    NOTE: This module has no pre-trained weights and is considered
+    **experimental**. It is NOT used in the default prediction path —
+    only the weighted-average path is active unless use_learned=True.
     """
 
     def __init__(self, num_models: int = 6, hidden_dim: int = 64) -> None:
@@ -59,39 +63,49 @@ class EnsembleClassifier(BaseModel):
     """
     Meta-classifier that combines all detection layers.
 
-    Features:
-    - Learned combination weights (not fixed averaging)
-    - Temperature-scaled confidence calibration
-    - Per-model contribution analysis
-    - Explainable decision process
-    - Dynamic model selection based on input quality
+    Production path (default):
+      Dual-domain soft-OR of AI-gen + face-forgery specialists.
+      Frequency/temporal are advisory only (low weight / gated).
+
+    Experimental: Learned CalibratedEnsemble (use_learned=True).
     """
 
     model_type = ModelType.ENSEMBLE
     model_name = "ensemble"
 
+    # Advisory weights — used only when domain specialists are missing.
+    # Primary path uses domain OR of ai_image_detector + forgery_detector.
     DEFAULT_WEIGHTS = {
-        "ai_image_detector": 0.40,
-        "forgery_detector": 0.25,
-        "frequency_analyzer": 0.15,
-        "attention_network": 0.10,
-        "temporal_analyzer": 0.05,
-        "biological_signals": 0.03,
-        "audio_sync": 0.02,
+        "ai_image_detector": 0.50,
+        "forgery_detector": 0.50,
+        "frequency_analyzer": 0.0,
+        "temporal_analyzer": 0.0,
+        "attention_network": 0.0,
+        "biological_signals": 0.0,
+        "audio_sync": 0.0,
     }
 
-    def __init__(self, device: str = "auto", **kwargs) -> None:
+    def __init__(
+        self,
+        device: str = "auto",
+        use_learned: bool = False,
+        **kwargs,
+    ) -> None:
         super().__init__(device=device)
-        self._ensemble_net = CalibratedEnsemble()
-        self._ensemble_net = self._ensemble_net.to(self.device).eval()
+        self._use_learned = use_learned
+        if use_learned:
+            self._ensemble_net = CalibratedEnsemble()
+            self._ensemble_net = self._ensemble_net.to(self.device).eval()
+        else:
+            self._ensemble_net = None
         self._model_weights = self.DEFAULT_WEIGHTS.copy()
         self._models: dict[str, BaseModel] = {}
         self._is_loaded = True
-        logger.info("Ensemble classifier initialized")
+        logger.info(f"Ensemble classifier initialized (use_learned={use_learned})")
 
     def load_weights(self, weights_path: Optional[str] = None) -> None:
-        """Load ensemble weights."""
-        if weights_path:
+        """Load ensemble weights (no-op unless use_learned=True)."""
+        if weights_path and self._use_learned:
             state_dict = torch.load(weights_path, map_location=self.device)
             self._ensemble_net.load_state_dict(state_dict)
         self._is_loaded = True
@@ -107,18 +121,29 @@ class EnsembleClassifier(BaseModel):
         self._model_weights = {k: v / total for k, v in weights.items()}
         logger.info(f"Updated ensemble weights: {self._model_weights}")
 
-    def predict(self, input_data: np.ndarray, **kwargs) -> ModelOutput:
+    def predict(
+        self,
+        input_data: np.ndarray,
+        model_results: Optional[dict[str, ModelOutput]] = None,
+        **kwargs,
+    ) -> ModelOutput:
         """
-        Run ensemble prediction combining all registered models.
+        Run ensemble prediction.
 
         Args:
-            input_data: Input data (image or video frames)
-            **kwargs: Passed to individual models
+            input_data: Input data (image or video frames) — used only when
+                        model_results is not provided (legacy path).
+            model_results: **Pre-computed model outputs** to combine.
+                           Passing this avoids re-running every model (fixes
+                           the double-inference problem).
+            **kwargs: Passed to individual models if model_results is None.
 
         Returns:
             ModelOutput with ensemble prediction and per-model breakdown
         """
-        result, elapsed = self._measure_inference(self._ensemble_predict, input_data, **kwargs)
+        result, elapsed = self._measure_inference(
+            self._ensemble_predict, input_data, model_results, **kwargs,
+        )
 
         return ModelOutput(
             prediction=result["prediction"],
@@ -128,89 +153,161 @@ class EnsembleClassifier(BaseModel):
                 "model_contributions": result["contributions"],
                 "model_agreement": result["agreement"],
                 "num_models_used": result["num_models"],
-                "calibration_applied": True,
+                "calibration_applied": self._use_learned,
+                "ai_gen_score": result["ai_gen_score"],
+                "face_forgery_score": result["face_forgery_score"],
             },
             explainability={
                 "decision_process": result["decision_process"],
-                "per_model_heatmaps": result.get("per_model_heatmaps", {}),
             },
             inference_time_ms=elapsed,
         )
 
-    def _ensemble_predict(self, input_data: np.ndarray, **kwargs) -> dict[str, Any]:
-        """Run all models and combine predictions."""
+    def _ensemble_predict(
+        self,
+        input_data: np.ndarray,
+        model_results: Optional[dict[str, ModelOutput]] = None,
+        **kwargs,
+    ) -> dict[str, Any]:
+        """Combine predictions — either from pre-computed results or by running models."""
         model_outputs: dict[str, dict[str, float]] = {}
         model_scores: list[float] = []
         model_weights: list[float] = []
         full_image = kwargs.get("full_image")
 
-        for name, model in self._models.items():
-            if not model.is_loaded:
-                logger.warning(f"Model {name} not loaded, skipping")
-                continue
-
-            try:
-                model_input = (
-                    full_image
-                    if name == "ai_image_detector" and full_image is not None
-                    else input_data
-                )
-                output = model.predict(model_input)
+        if model_results is not None:
+            # ── Use pre-computed results (no re-inference) ──
+            for name, output in model_results.items():
+                if not isinstance(output, ModelOutput):
+                    continue
+                weight = self._model_weights.get(name, 0.0)
+                if weight <= 0.0:
+                    continue
+                fake_prob = float(output.probabilities.get("fake", 0.5))
                 model_outputs[name] = {
                     "prediction": output.prediction,
                     "confidence": output.confidence,
-                    "fake_prob": output.probabilities.get("fake", 0.5),
-                    "real_prob": output.probabilities.get("real", 0.5),
+                    "fake_prob": fake_prob,
+                    "real_prob": float(output.probabilities.get("real", 1.0 - fake_prob)),
                     "inference_time_ms": output.inference_time_ms,
                 }
-
-                weight = self._model_weights.get(name, 1.0 / len(self._models))
-                model_scores.append(output.probabilities.get("fake", 0.5))
+                if name == "forgery_detector" and isinstance(output.metadata, dict):
+                    thr = output.metadata.get("decision_threshold")
+                    if thr is not None:
+                        model_outputs[name]["decision_threshold"] = float(thr)
+                model_scores.append(fake_prob)
                 model_weights.append(weight)
+        else:
+            # ── Legacy: run models (deprecated — kept for backward compat) ──
+            for name, model in self._models.items():
+                weight = self._model_weights.get(name, 0.0)
+                if weight <= 0.0:
+                    logger.debug(f"Skipping gated model: {name} (weight={weight})")
+                    continue
+                if not model.is_loaded:
+                    logger.warning(f"Model {name} not loaded, skipping")
+                    continue
 
-            except Exception as e:
-                logger.error(f"Model {name} failed: {e}")
+                try:
+                    model_input = (
+                        full_image
+                        if name == "ai_image_detector" and full_image is not None
+                        else input_data
+                    )
+                    output = model.predict(model_input)
+                    model_outputs[name] = {
+                        "prediction": output.prediction,
+                        "confidence": output.confidence,
+                        "fake_prob": float(output.probabilities.get("fake", 0.5)),
+                        "real_prob": float(output.probabilities.get("real", 0.5)),
+                        "inference_time_ms": output.inference_time_ms,
+                    }
+                    model_scores.append(float(output.probabilities.get("fake", 0.5)))
+                    model_weights.append(weight)
+
+                except Exception as e:
+                    logger.error(f"Model {name} failed: {e}")
 
         if not model_scores:
             return self._fallback_prediction()
 
-        # Method 1: Weighted average
-        model_scores_arr = np.array(model_scores)
-        model_weights_arr = np.array(model_weights)
-        model_weights_arr = model_weights_arr / model_weights_arr.sum()
-
-        weighted_avg = float(np.dot(model_scores_arr, model_weights_arr))
-
-        # Method 2: Learned ensemble
-        try:
-            scores_tensor = torch.tensor(
-                [[1 - s, s] for s in model_scores], dtype=torch.float32
-            ).unsqueeze(0).to(self.device)
-            learned_score = self._ensemble_net(scores_tensor).item()
-        except Exception:
-            learned_score = weighted_avg
-
-        # Combine methods
-        final_score = 0.5 * weighted_avg + 0.5 * learned_score
-
-        # High-confidence generative-AI hits should not be diluted by
-        # face-swap-only backbones that were trained on different artifacts.
+        # ── Dual-domain soft OR (production path) ──
+        # Complementary specialists: generative-AI vs face-swap forgery.
+        # Soft OR = 1 - Π(1 - p_i)  — either domain can prove FAKE.
+        # Never dampen toward REAL when AI-gen says "authentic photo".
         ai_out = model_outputs.get("ai_image_detector")
-        if ai_out is not None and ai_out["fake_prob"] >= 0.90:
-            final_score = max(final_score, 0.75 * ai_out["fake_prob"] + 0.25 * final_score)
-        elif ai_out is not None and ai_out["real_prob"] >= 0.90:
-            final_score = min(final_score, 0.75 * (1.0 - ai_out["real_prob"]) + 0.25 * final_score)
+        forgery_out = model_outputs.get("forgery_detector")
+        ai_gen_score = float(ai_out["fake_prob"]) if ai_out is not None else None
+        face_forgery_score = (
+            float(forgery_out["fake_prob"]) if forgery_out is not None else None
+        )
 
-        # Model agreement analysis
+        domain_scores = [
+            s for s in (ai_gen_score, face_forgery_score) if s is not None
+        ]
+        if domain_scores:
+            AI_FAKE_THRESHOLD = 0.50
+            FORGERY_FAKE_THRESHOLD = 0.35
+            if forgery_out is not None and "decision_threshold" in forgery_out:
+                FORGERY_FAKE_THRESHOLD = float(forgery_out["decision_threshold"])
+
+            ai_hit = ai_gen_score is not None and ai_gen_score >= AI_FAKE_THRESHOLD
+            forgery_hit = (
+                face_forgery_score is not None
+                and face_forgery_score >= FORGERY_FAKE_THRESHOLD
+            )
+
+            if ai_hit or forgery_hit:
+                # Soft-OR of the triggering specialists only
+                active = []
+                if ai_hit:
+                    active.append(ai_gen_score)
+                if forgery_hit:
+                    active.append(face_forgery_score)
+                survive_real = 1.0
+                for s in active:
+                    survive_real *= 1.0 - float(np.clip(s, 0.0, 1.0))
+                final_score = float(max(1.0 - survive_real, max(active)))
+            else:
+                # Neither specialist confident → lean REAL using max soft signal
+                # scaled below the decision boundary.
+                peak = max(domain_scores)
+                final_score = float(min(peak, 0.49))
+
+            method = "domain_dual_threshold_or"
+            weighted_avg = float(np.mean(domain_scores))
+            learned_score = weighted_avg
+        else:
+            # Fallback: weighted average of whatever models remain
+            model_scores_arr = np.array(model_scores)
+            model_weights_arr = np.array(model_weights)
+            model_weights_arr = model_weights_arr / model_weights_arr.sum()
+            weighted_avg = float(np.dot(model_scores_arr, model_weights_arr))
+            learned_score = weighted_avg
+            if self._use_learned and self._ensemble_net is not None and len(model_scores) >= 2:
+                try:
+                    scores_tensor = torch.tensor(
+                        [[1 - s, s] for s in model_scores], dtype=torch.float32
+                    ).unsqueeze(0).to(self.device)
+                    learned_score = self._ensemble_net(scores_tensor).item()
+                except Exception:
+                    pass
+            final_score = (
+                0.5 * weighted_avg + 0.5 * learned_score
+                if self._use_learned
+                else weighted_avg
+            )
+            method = "weighted_average" if not self._use_learned else "calibrated_ensemble"
+
+        # ── Agreement ──
         predictions = [o["prediction"] for o in model_outputs.values()]
         agreement = max(
             predictions.count("real"),
             predictions.count("fake"),
-        ) / len(predictions)
+        ) / len(predictions) if predictions else 0.0
 
         prediction = "fake" if final_score >= 0.5 else "real"
         class_probability = final_score if prediction == "fake" else (1.0 - final_score)
-        # Soft-calibrate: keep class probability primary, nudge by agreement
         confidence = float(np.clip(0.85 * class_probability + 0.15 * agreement, 0.01, 0.99))
 
         return {
@@ -220,12 +317,17 @@ class EnsembleClassifier(BaseModel):
             "contributions": model_outputs,
             "agreement": float(agreement),
             "num_models": len(model_outputs),
+            "ai_gen_score": ai_gen_score,
+            "face_forgery_score": face_forgery_score if face_forgery_score is not None else 0.5,
             "decision_process": {
                 "weighted_average": weighted_avg,
                 "learned_score": learned_score,
                 "final_score": final_score,
-                "class_probability": class_probability,
-                "method": "calibrated_ensemble",
+                "method": method,
+                "domain_scores": {
+                    "ai_gen": ai_gen_score,
+                    "face_forgery": face_forgery_score,
+                },
             },
         }
 
@@ -253,6 +355,8 @@ class EnsembleClassifier(BaseModel):
             "contributions": {},
             "agreement": 0.0,
             "num_models": 0,
+            "ai_gen_score": None,
+            "face_forgery_score": 0.5,
             "decision_process": {
                 "weighted_average": 0.5,
                 "learned_score": 0.5,

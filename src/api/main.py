@@ -131,6 +131,23 @@ async def health():
     )
 
 
+@app.get("/metrics", response_model=dict)
+async def metrics():
+    """
+    Basic metrics endpoint.
+
+    Returns pipeline model list, device info, and uptime.
+    """
+    uptime = time.time() - app.state.start_time
+    settings = get_settings()
+    return {
+        "uptime_seconds": round(uptime, 2),
+        "device": settings.model.device,
+        "image_models": list(app.state.image_pipeline._models.keys()),
+        "video_models": list(app.state.video_pipeline._models.keys()),
+    }
+
+
 @app.post("/detect/image", response_model=DetectionResponse)
 async def detect_image(
     file: UploadFile = File(..., description="Image file (jpg, png, webp)"),

@@ -106,12 +106,10 @@ class ForgeryDetectorNet(nn.Module):
 @ModelRegistry.register
 class ForgeryDetector(BaseModel):
     """
-    Deepfake detection using fine-tuned vision backbone.
+    Face-forgery detection using production-style multi-backbone ensemble.
 
-    Supports:
-    - EfficientNet-B4 with DeepShield Celeb-DF / FF++ weights (default)
-    - Custom XceptionNet fallback
-    - HuggingFace ViT
+    Default ``backbone="ensemble"`` mirrors high-accuracy open-source systems:
+    EfficientNet-B4 (Celeb-DF) 55% + Xception (trained detector) 45%.
     """
 
     model_type = ModelType.FORGERY_DETECTION
@@ -119,13 +117,20 @@ class ForgeryDetector(BaseModel):
 
     DEFAULT_WEIGHT_PATHS = {
         "efficientnet": "models/weights/efficientnet_celebdf.pt",
+        "efficientnet_inswapper": "models/weights/efficientnet_inswapper.pt",
         "xception": "models/weights/xception_ffpp.pt",
         "vit": "models/weights/vit_face_forensics.pt",
+    }
+    # Industry soft-vote mix: adapted InsightFace specialist dominates when present
+    ENSEMBLE_WEIGHTS = {
+        "efficientnet_inswapper": 0.55,
+        "efficientnet": 0.30,
+        "xception": 0.15,
     }
 
     def __init__(
         self,
-        backbone: str = "efficientnet",
+        backbone: str = "ensemble",
         device: str = "auto",
         use_pretrained: bool = True,
         weights_path: Optional[str] = None,
@@ -135,6 +140,8 @@ class ForgeryDetector(BaseModel):
         self.use_pretrained = use_pretrained
         self._weights_path = weights_path
         self._net = None
+        self._nets: dict[str, nn.Module] = {}
+        self._net_meta: dict[str, dict[str, Any]] = {}
         self._transform = None
         self._input_size = 256
         # Index mapping used by predict(); overwritten when a checkpoint declares class names
@@ -148,6 +155,22 @@ class ForgeryDetector(BaseModel):
 
         start = time.perf_counter()
         weights_path = weights_path or self._weights_path
+
+        if self.backbone == "ensemble":
+            self._load_ensemble_backbones()
+            self._input_size = 380
+            self._transform_params = {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+            }
+            self._is_loaded = True
+            self._load_time_ms = (time.perf_counter() - start) * 1000
+            logger.info(
+                f"Forgery detector (ensemble={list(self._nets.keys())}) "
+                f"loaded in {self._load_time_ms:.1f}ms"
+            )
+            return
+
         if weights_path is None:
             default = Path(self.DEFAULT_WEIGHT_PATHS.get(self.backbone, ""))
             if default.exists():
@@ -156,6 +179,10 @@ class ForgeryDetector(BaseModel):
         if self.backbone == "efficientnet":
             self._net = self._build_efficientnet()
             self._input_size = 380
+            self._transform_params = {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+            }
             if weights_path:
                 self._load_efficientnet_checkpoint(weights_path)
             elif self.use_pretrained:
@@ -164,10 +191,18 @@ class ForgeryDetector(BaseModel):
                 )
 
         elif self.backbone == "xception":
-            self._net = ForgeryDetectorNet(num_classes=2)
-            self._input_size = 256
+            from src.core.models.xception_net import XceptionNet
+
+            self._net = XceptionNet(num_classes=2)
+            self._input_size = 299
+            # RamadhanZome / Chollet Xception training norm + class order
+            self._transform_params = {
+                "mean": [0.5, 0.5, 0.5],
+                "std": [0.5, 0.5, 0.5],
+            }
+            self._class_to_idx = {"fake": 0, "real": 1}
             if weights_path:
-                loaded = self._try_load_state_dict(weights_path, strict=False)
+                loaded = self._try_load_state_dict(weights_path, strict=True)
                 if loaded:
                     logger.info(f"Loaded Xception weights from {weights_path}")
                 else:
@@ -190,6 +225,10 @@ class ForgeryDetector(BaseModel):
             )
             self._net = ViTForImageClassification(config)
             self._input_size = 224
+            self._transform_params = {
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+            }
             if weights_path:
                 self._try_load_state_dict(weights_path, strict=False)
             elif self.use_pretrained:
@@ -202,16 +241,87 @@ class ForgeryDetector(BaseModel):
             raise ValueError(f"Unsupported backbone: {self.backbone}")
 
         self._net = self._net.to(self.device).eval()
-        self._transform_params = {
-            "mean": [0.485, 0.456, 0.406],
-            "std": [0.229, 0.224, 0.225],
-        }
         self._is_loaded = True
         self._load_time_ms = (time.perf_counter() - start) * 1000
         logger.info(
             f"Forgery detector ({self.backbone}) loaded in {self._load_time_ms:.1f}ms "
             f"[classes={self._class_to_idx}]"
         )
+
+    def _load_ensemble_backbones(self) -> None:
+        """Load industry soft-vote backbones (adapted + Celeb-DF + Xception)."""
+        from pathlib import Path
+        from src.core.models.xception_net import XceptionNet
+
+        self._decision_threshold = 0.5
+
+        # 1) Domain-adapted InsightFace / inswapper specialist (preferred)
+        ins_path = Path(self.DEFAULT_WEIGHT_PATHS["efficientnet_inswapper"])
+        if ins_path.exists():
+            net = self._build_efficientnet().to(self.device).eval()
+            self._net = net
+            self._load_efficientnet_checkpoint(str(ins_path))
+            thr = 0.5
+            try:
+                ckpt = torch.load(str(ins_path), map_location="cpu", weights_only=False)
+                if isinstance(ckpt, dict) and "decision_threshold" in ckpt:
+                    thr = float(ckpt["decision_threshold"])
+                    self._decision_threshold = thr
+            except Exception:
+                pass
+            self._nets["efficientnet_inswapper"] = net
+            self._net_meta["efficientnet_inswapper"] = {
+                "input_size": 380,
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+                "class_to_idx": dict(self._class_to_idx),
+                "weight": self.ENSEMBLE_WEIGHTS["efficientnet_inswapper"],
+                "decision_threshold": thr,
+            }
+            logger.info(
+                f"Loaded InsightFace-adapted EfficientNet from {ins_path} "
+                f"(threshold={thr:.2f})"
+            )
+
+        # 2) Original Celeb-DF EfficientNet (general face-swap / FF++)
+        eff_path = Path(self.DEFAULT_WEIGHT_PATHS["efficientnet"])
+        if eff_path.exists():
+            net = self._build_efficientnet().to(self.device).eval()
+            self._net = net
+            self._load_efficientnet_checkpoint(str(eff_path))
+            self._nets["efficientnet"] = net
+            self._net_meta["efficientnet"] = {
+                "input_size": 380,
+                "mean": [0.485, 0.456, 0.406],
+                "std": [0.229, 0.224, 0.225],
+                "class_to_idx": dict(self._class_to_idx),
+                "weight": self.ENSEMBLE_WEIGHTS["efficientnet"],
+            }
+        else:
+            logger.warning("EfficientNet Celeb-DF weights missing from face-forgery ensemble")
+
+        # 3) Xception (StyleGAN / generic detector) — advisory via soft-OR
+        xcp_path = Path(self.DEFAULT_WEIGHT_PATHS["xception"])
+        if xcp_path.exists():
+            net = XceptionNet(num_classes=2).to(self.device).eval()
+            self._net = net
+            if self._try_load_state_dict(str(xcp_path), strict=True):
+                self._nets["xception"] = net
+                self._net_meta["xception"] = {
+                    "input_size": 299,
+                    "mean": [0.5, 0.5, 0.5],
+                    "std": [0.5, 0.5, 0.5],
+                    "class_to_idx": {"fake": 0, "real": 1},
+                    "weight": self.ENSEMBLE_WEIGHTS["xception"],
+                }
+                logger.info(f"Loaded Xception into forgery ensemble from {xcp_path}")
+            else:
+                logger.warning("Xception failed to load into forgery ensemble")
+
+        if not self._nets:
+            raise RuntimeError("No forgery backbones available for ensemble")
+        self._net = next(iter(self._nets.values()))
+        self._class_to_idx = self._net_meta[next(iter(self._nets))]["class_to_idx"]
 
     def _build_efficientnet(self) -> nn.Module:
         from torchvision.models import efficientnet_b4
@@ -275,17 +385,25 @@ class ForgeryDetector(BaseModel):
             logger.warning(f"Failed to load weights from {weights_path}: {e}")
             return False
 
-    def _preprocess(self, image: np.ndarray) -> torch.Tensor:
+    def _preprocess(
+        self,
+        image: np.ndarray,
+        input_size: Optional[int] = None,
+        mean: Optional[list[float]] = None,
+        std: Optional[list[float]] = None,
+    ) -> torch.Tensor:
         """Convert BGR image to normalized tensor."""
         import cv2
 
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        size = self._input_size
+        size = input_size or self._input_size
         rgb = cv2.resize(rgb, (size, size), interpolation=cv2.INTER_LANCZOS4)
         tensor = torch.from_numpy(rgb).float().permute(2, 0, 1) / 255.0
-        mean = torch.tensor(self._transform_params["mean"]).view(3, 1, 1)
-        std = torch.tensor(self._transform_params["std"]).view(3, 1, 1)
-        tensor = (tensor - mean) / std
+        mean_v = mean or self._transform_params["mean"]
+        std_v = std or self._transform_params["std"]
+        mean_t = torch.tensor(mean_v).view(3, 1, 1)
+        std_t = torch.tensor(std_v).view(3, 1, 1)
+        tensor = (tensor - mean_t) / std_t
         return tensor.unsqueeze(0).to(self.device)
 
     @torch.no_grad()
@@ -299,6 +417,72 @@ class ForgeryDetector(BaseModel):
         Returns:
             ModelOutput with prediction and confidence
         """
+        import time
+
+        start = time.perf_counter()
+
+        if self.backbone == "ensemble" and self._nets:
+            member_scores: dict[str, float] = {}
+            for name, net in self._nets.items():
+                meta = self._net_meta[name]
+                tensor = self._preprocess(
+                    input_data,
+                    input_size=meta["input_size"],
+                    mean=meta["mean"],
+                    std=meta["std"],
+                )
+                logits = net(tensor)
+                probs = F.softmax(logits, dim=-1).squeeze().cpu().numpy()
+                class_map = meta["class_to_idx"]
+                fake_idx = int(class_map.get("fake", 1))
+                fake_prob_i = float(probs[fake_idx])
+                member_scores[name] = fake_prob_i
+
+            # Industry soft-vote (abraraltaf92 / DeepDect): weighted average of
+            # complementary face-forgery specialists, then soft-OR with the peak.
+            weight_sum = 0.0
+            weighted = 0.0
+            for name, score in member_scores.items():
+                w = float(self._net_meta[name].get("weight", 0.0))
+                if w <= 0:
+                    continue
+                weighted += w * score
+                weight_sum += w
+            soft_vote = weighted / weight_sum if weight_sum > 0 else float(np.mean(list(member_scores.values())))
+            peak = float(max(member_scores.values()))
+            # Prefer adapted specialist peak when present and confident
+            if "efficientnet_inswapper" in member_scores:
+                adapted = member_scores["efficientnet_inswapper"]
+                thr = float(
+                    self._net_meta["efficientnet_inswapper"].get("decision_threshold", 0.3)
+                )
+                if adapted >= thr:
+                    fake_prob = float(max(soft_vote, adapted))
+                else:
+                    fake_prob = float(0.7 * soft_vote + 0.3 * adapted)
+            else:
+                fake_prob = float(max(soft_vote, 0.85 * peak + 0.15 * soft_vote))
+
+            real_prob = 1.0 - fake_prob
+            prediction = "fake" if fake_prob >= 0.5 else "real"
+            confidence = max(fake_prob, real_prob)
+            elapsed = (time.perf_counter() - start) * 1000
+            return ModelOutput(
+                prediction=prediction,
+                confidence=confidence,
+                probabilities={"real": real_prob, "fake": fake_prob},
+                metadata={
+                    "backbone": "ensemble",
+                    "member_fake_probs": member_scores,
+                    "fusion": "soft_vote_adapted",
+                    "decision_threshold": getattr(self, "_decision_threshold", 0.5),
+                    "ensemble_weights": {
+                        k: self._net_meta[k]["weight"] for k in self._nets
+                    },
+                },
+                inference_time_ms=elapsed,
+            )
+
         tensor = self._preprocess(input_data)
         result, elapsed = self._measure_inference(self._forward, tensor)
 
